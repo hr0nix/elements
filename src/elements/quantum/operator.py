@@ -136,6 +136,13 @@ class Operator:
             raise ValueError("Bra must be from the operator's state space")
         return StateSpaceVector(self.state_space, other.components @ self.matrix)
 
+    def expectation(self, state: StateSpaceVector) -> float:
+        if not self.is_hermitian:
+            raise ValueError("Expectation values are defined for Hermitian operators")
+        if not (state.is_ket and state.is_normalized):
+            raise ValueError("Expectation values require a normalized ket")
+        return (state.dagger @ self @ state).real
+
     def close_to(self, other: Operator, tolerance: float = DEFAULT_TOLERANCE) -> bool:
         if self.state_space != other.state_space:
             return False

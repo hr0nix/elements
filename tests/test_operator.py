@@ -32,8 +32,20 @@ def test_pauli_matrices_square_to_identity_and_multiply_cyclically():
 
 def test_spin_expectation_values_are_one_along_the_prepared_axis_and_zero_across_it():
     x_plus, z_plus = Spin.x_plus, Spin.z_plus
-    assert x_plus.dagger @ sigma_x @ x_plus == pytest.approx(1)
-    assert z_plus.dagger @ sigma_x @ z_plus == pytest.approx(0)
+    assert sigma_x.expectation(x_plus) == pytest.approx(1)
+    assert sigma_x.expectation(z_plus) == pytest.approx(0)
+
+
+def test_expectation_requires_a_hermitian_operator():
+    with pytest.raises(ValueError, match="Hermitian"):
+        (sigma_x @ sigma_y).expectation(Spin.z_plus)
+
+
+def test_expectation_requires_a_normalized_ket():
+    with pytest.raises(ValueError, match="normalized ket"):
+        sigma_z.expectation(2 * Spin.z_plus)
+    with pytest.raises(ValueError, match="normalized ket"):
+        sigma_z.expectation(Spin.z_plus.dagger)
 
 
 def test_kronecker_product_builds_operators_on_a_pair_of_spins():
