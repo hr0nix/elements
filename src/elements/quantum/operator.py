@@ -4,7 +4,7 @@ from numbers import Number
 import numpy as np
 
 from elements.math.typechecks import is_complex
-from elements.math.utils import frozen
+from elements.math.utils import DEFAULT_TOLERANCE, frozen
 from elements.quantum.state import StateSpace, StateSpaceVector
 
 
@@ -78,7 +78,14 @@ class Operator:
     def is_unitary(self) -> bool:
         return self.is_normal and np.allclose(np.abs(self.eigenvalues), 1.0)
 
-    def conjugate_transpose(self) -> Operator:
+    def kronecker_product(self, other: Operator) -> Operator:
+        return Operator(
+            self.state_space.tensor_product(other.state_space),
+            np.kron(self.matrix, other.matrix),
+        )
+
+    @property
+    def dagger(self) -> Operator:
         return Operator(self.state_space, self.matrix.conj().T)
 
     def __mul__(self, other: complex) -> Operator:
@@ -129,11 +136,10 @@ class Operator:
             raise ValueError("Bra must be from the operator's state space")
         return StateSpaceVector(self.state_space, other.components @ self.matrix)
 
-    # Equal up to floating-point tolerance, so not transitive and not hashable.
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Operator):
-            return NotImplemented
-        return self.state_space == other.state_space and np.allclose(self.matrix, other.matrix)
+    def close_to(self, other: Operator, tolerance: float = DEFAULT_TOLERANCE) -> bool:
+        if self.state_space != other.state_space:
+            return False
+        return np.allclose(self.matrix, other.matrix, rtol=0.0, atol=tolerance)
 
     def __repr__(self) -> str:
         return f"Operator on {self.state_space}\n{self.matrix}"

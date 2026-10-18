@@ -1,75 +1,34 @@
 import numpy as np
 
+from elements.quantum.operator import Operator
 from elements.quantum.state import StateSpace, StateSpaceVector
 
 
 class Spin:
-    @staticmethod
-    def state_space() -> StateSpace:
-        return StateSpace(labels=["u", "d"])
+    state_space = StateSpace(labels=["u", "d"])
 
-    @staticmethod
-    def z_plus() -> StateSpaceVector:
-        return StateSpaceVector(
-            state_space=Spin.state_space(), components=np.array([[1.0], [0.0]], dtype=complex)
-        )
+    z_plus = StateSpaceVector(state_space, np.array([[1.0], [0.0]], dtype=complex))
+    z_minus = StateSpaceVector(state_space, np.array([[0.0], [1.0]], dtype=complex))
+    x_plus = (z_plus + z_minus) / np.sqrt(2)
+    x_minus = (z_plus - z_minus) / np.sqrt(2)
+    y_plus = (z_plus + 1j * z_minus) / np.sqrt(2)
+    y_minus = (z_plus - 1j * z_minus) / np.sqrt(2)
 
-    @staticmethod
-    def z_minus() -> StateSpaceVector:
-        return StateSpaceVector(
-            state_space=Spin.state_space(), components=np.array([[0.0], [1.0]], dtype=complex)
-        )
-
-    @staticmethod
-    def x_plus() -> StateSpaceVector:
-        return (Spin.z_plus() + Spin.z_minus()) / np.sqrt(2)
-
-    @staticmethod
-    def x_minus() -> StateSpaceVector:
-        return (Spin.z_plus() - Spin.z_minus()) / np.sqrt(2)
-
-    @staticmethod
-    def y_plus() -> StateSpaceVector:
-        return (Spin.z_plus() + 1j * Spin.z_minus()) / np.sqrt(2)
-
-    @staticmethod
-    def y_minus() -> StateSpaceVector:
-        return (Spin.z_plus() - 1j * Spin.z_minus()) / np.sqrt(2)
+    identity = Operator.identity(state_space)
+    sigma_x = Operator.spectral([(+1, x_plus), (-1, x_minus)])
+    sigma_y = Operator.spectral([(+1, y_plus), (-1, y_minus)])
+    sigma_z = Operator.spectral([(+1, z_plus), (-1, z_minus)])
 
 
 class TwoSpins:
-    @staticmethod
-    def state_space() -> StateSpace:
-        return Spin.state_space().tensor_product(Spin.state_space())
+    state_space = Spin.state_space.tensor_product(Spin.state_space)
 
-    @staticmethod
-    def uu() -> StateSpaceVector:
-        return Spin.z_plus().kronecker_product(Spin.z_plus())
+    uu = Spin.z_plus.kronecker_product(Spin.z_plus)
+    ud = Spin.z_plus.kronecker_product(Spin.z_minus)
+    du = Spin.z_minus.kronecker_product(Spin.z_plus)
+    dd = Spin.z_minus.kronecker_product(Spin.z_minus)
 
-    @staticmethod
-    def ud() -> StateSpaceVector:
-        return Spin.z_plus().kronecker_product(Spin.z_minus())
-
-    @staticmethod
-    def du() -> StateSpaceVector:
-        return Spin.z_minus().kronecker_product(Spin.z_plus())
-
-    @staticmethod
-    def dd() -> StateSpaceVector:
-        return Spin.z_minus().kronecker_product(Spin.z_minus())
-
-    @staticmethod
-    def singlet() -> StateSpaceVector:
-        return (TwoSpins.ud() - TwoSpins.du()) / np.sqrt(2)
-
-    @staticmethod
-    def triplet_1() -> StateSpaceVector:
-        return (TwoSpins.ud() + TwoSpins.du()) / np.sqrt(2)
-
-    @staticmethod
-    def triplet_2() -> StateSpaceVector:
-        return (TwoSpins.uu() + TwoSpins.dd()) / np.sqrt(2)
-
-    @staticmethod
-    def triplet_3() -> StateSpaceVector:
-        return (TwoSpins.uu() - TwoSpins.dd()) / np.sqrt(2)
+    singlet = (ud - du) / np.sqrt(2)
+    triplet_1 = (ud + du) / np.sqrt(2)
+    triplet_2 = (uu + dd) / np.sqrt(2)
+    triplet_3 = (uu - dd) / np.sqrt(2)

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from elements.math.typechecks import is_bra_vector, is_complex_vector, is_ket_vector
-from elements.math.utils import frozen
+from elements.math.utils import DEFAULT_TOLERANCE, frozen
 
 if TYPE_CHECKING:
     from elements.quantum.operator import Operator
@@ -16,7 +16,7 @@ class StateSpace:
         if len(set(labels)) != len(labels):
             raise ValueError("Labels must be unique")
 
-        self._labels = labels
+        self._labels = tuple(labels)
 
     def tensor_product(self, other: StateSpace) -> StateSpace:
         pairs = [(label1, label2) for label1 in self._labels for label2 in other._labels]
@@ -35,7 +35,7 @@ class StateSpace:
         return self._labels == other._labels
 
     @property
-    def labels(self) -> list[str]:
+    def labels(self) -> tuple[str, ...]:
         return self._labels
 
     @property
@@ -72,6 +72,11 @@ class StateSpaceVector:
 
     def is_compatible(self, other: StateSpaceVector) -> bool:
         return self.is_state_space_compatible(other) and self.is_bra_ket_compatible(other)
+
+    def close_to(self, other: StateSpaceVector, tolerance: float = DEFAULT_TOLERANCE) -> bool:
+        if not self.is_compatible(other):
+            return False
+        return np.allclose(self.components, other.components, rtol=0.0, atol=tolerance)
 
     @property
     def norm(self) -> float:
@@ -114,16 +119,15 @@ class StateSpaceVector:
             np.kron(self.components, other.components),
         )
 
-    def conjugate_transpose(self) -> StateSpaceVector:
+    @property
+    def dagger(self) -> StateSpaceVector:
         return StateSpaceVector(self.state_space, self.components.conj().T)
 
     def inner_product(self, other: StateSpaceVector) -> complex:
         if not self.is_state_space_compatible(other):
             raise ValueError("Inner product requires vectors from the same state space")
         if not (self.is_bra and other.is_ket):
-            raise ValueError(
-                "Inner product requires a bra and a ket; use conjugate_transpose() to convert"
-            )
+            raise ValueError("Inner product requires a bra and a ket; use .dagger to convert")
 
         return (self.components @ other.components).item()
 
@@ -133,9 +137,7 @@ class StateSpaceVector:
         if not self.is_state_space_compatible(other):
             raise ValueError("Outer product requires vectors from the same state space")
         if not (self.is_ket and other.is_bra):
-            raise ValueError(
-                "Outer product requires a ket and a bra; use conjugate_transpose() to convert"
-            )
+            raise ValueError("Outer product requires a ket and a bra; use .dagger to convert")
 
         return Operator(self.state_space, self.components @ other.components)
 
@@ -146,7 +148,7 @@ class StateSpaceVector:
             return self.inner_product(other)
         if self.is_ket and other.is_bra:
             return self.outer_product(other)
-        raise ValueError("@ requires a bra and a ket; use conjugate_transpose() to convert")
+        raise ValueError("@ requires a bra and a ket; use .dagger to convert")
 
     def __repr__(self) -> str:
         left, right = ("|", ">") if self.is_ket else ("<", "|")
