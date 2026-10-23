@@ -1,3 +1,6 @@
+import cmath
+import math
+
 import numpy as np
 import pytest
 
@@ -6,6 +9,11 @@ from elements.quantum.spin import Spin, TwoSpins
 
 sigma_x, sigma_y, sigma_z = Spin.sigma_x, Spin.sigma_y, Spin.sigma_z
 identity = Spin.identity
+sigma_dot_tau = (
+    sigma_x.kronecker_product(sigma_x)
+    + sigma_y.kronecker_product(sigma_y)
+    + sigma_z.kronecker_product(sigma_z)
+)
 
 
 def test_pauli_matrices_built_from_their_eigenstates_match_the_textbook():
@@ -88,3 +96,68 @@ def test_eigenvalues_alone_cannot_tell_a_shear_from_the_identity():
 def test_spectral_requires_orthonormal_eigenvectors():
     with pytest.raises(ValueError, match="orthonormal"):
         Operator.spectral([(+1, Spin.z_plus), (-1, Spin.x_plus)])
+
+
+@pytest.mark.parametrize(
+    "operator",
+    [
+        pytest.param(sigma_x + sigma_z, id="hermitian"),
+        pytest.param(sigma_x @ sigma_y, id="unitary"),
+        pytest.param(sigma_dot_tau, id="degenerate hermitian"),
+        pytest.param(1j * sigma_dot_tau, id="degenerate anti-hermitian"),
+        pytest.param(Operator.spectral([(1, Spin.x_plus)]), id="projector"),
+    ],
+)
+def test_operator_is_rebuilt_from_its_own_eigenpairs(operator):
+    eigenpairs = list(zip(operator.eigenvalues, operator.eigenvectors, strict=True))
+    assert len(eigenpairs) == operator.state_space.dimension
+    for value, vector in eigenpairs:
+        assert (operator @ vector).close_to(vector * value)
+    assert Operator.spectral(eigenpairs).close_to(operator)
+
+
+def test_non_normal_operators_have_no_eigenbasis_to_exponentiate():
+    shear = identity + Spin.z_plus @ Spin.z_minus.dagger
+    with pytest.raises(ValueError, match="normal"):
+        _ = shear.eigenvectors
+    with pytest.raises(ValueError, match="normal"):
+        shear.exp()
+
+
+@pytest.mark.parametrize(
+    "sigma",
+    [
+        pytest.param(sigma_x, id="x"),
+        pytest.param(sigma_y, id="y"),
+        pytest.param(sigma_z, id="z"),
+        pytest.param((sigma_x + sigma_z) / math.sqrt(2), id="xz diagonal"),
+    ],
+)
+def test_exponentials_of_operators_squaring_to_identity_have_a_closed_form(sigma):
+    theta = 0.7
+    closed_form = math.cos(theta) * identity - 1j * math.sin(theta) * sigma
+    assert sigma.exp(-1j * theta).close_to(closed_form)
+
+
+def test_imaginary_exponentials_of_a_hermitian_operator_are_unitaries_whose_exponents_add():
+    hamiltonian = sigma_x + 2 * sigma_z
+    evolution = hamiltonian.exp(-0.3j)
+    assert (evolution.dagger @ evolution).close_to(identity)
+    assert (hamiltonian.exp(-0.1j) @ hamiltonian.exp(-0.2j)).close_to(evolution)
+
+
+def test_spin_in_a_magnetic_field_along_z_precesses_around_it():
+    omega, t = 2.0, 0.4
+    hamiltonian = omega / 2 * sigma_z
+    state = hamiltonian.exp(-1j * t) @ Spin.x_plus
+    assert sigma_x.expectation(state) == pytest.approx(math.cos(omega * t))
+    assert sigma_y.expectation(state) == pytest.approx(math.sin(omega * t))
+    assert sigma_z.expectation(state) == pytest.approx(0)
+
+
+def test_energy_eigenstates_only_pick_up_a_phase():
+    t = 0.9
+    evolution = sigma_dot_tau.exp(-1j * t)
+    assert (evolution @ TwoSpins.singlet).close_to(cmath.exp(3j * t) * TwoSpins.singlet)
+    for triplet in (TwoSpins.triplet_1, TwoSpins.triplet_2, TwoSpins.triplet_3):
+        assert (evolution @ triplet).close_to(cmath.exp(-1j * t) * triplet)

@@ -9,22 +9,27 @@ from elements.quantum.state import StateSpace, StateSpaceVector
 
 
 class Operator:
-    # eigenvalues and is_normal are trusted as caches: pass them only when known exactly.
+    # eigenvalues, eigenvectors and is_normal are trusted as caches: pass them only when known
+    # exactly. eigenvectors are the orthonormal columns of a matrix, ordered like eigenvalues.
     def __init__(
         self,
         state_space: StateSpace,
         matrix: np.ndarray,
         *,
         eigenvalues: np.ndarray | None = None,
+        eigenvectors: np.ndarray | None = None,
         is_normal: bool | None = None,
     ):
         dimension = state_space.dimension
         if not is_complex(matrix) or matrix.shape != (dimension, dimension):
             raise ValueError("Matrix must be complex and square, matching the state space")
+        if eigenvectors is not None and eigenvalues is None:
+            raise ValueError("Eigenvectors must come with the eigenvalues they belong to")
 
         self.state_space = state_space
         self.matrix = frozen(matrix)
         self._eigenvalues = None if eigenvalues is None else frozen(eigenvalues)
+        self._eigenvectors = None if eigenvectors is None else frozen(eigenvectors)
         self._is_normal = is_normal
 
     @staticmethod
@@ -34,6 +39,7 @@ class Operator:
             state_space,
             np.eye(dimension, dtype=complex),
             eigenvalues=np.ones(dimension, dtype=complex),
+            eigenvectors=np.eye(dimension, dtype=complex),
             is_normal=True,
         )
 
@@ -50,17 +56,64 @@ class Operator:
         if not np.allclose(eigenvectors.conj().T @ eigenvectors, np.eye(len(eigenpairs))):
             raise ValueError("Eigenvectors must be orthonormal")
 
-        matrix = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.conj().T
         # Directions not spanned by the eigenvectors get eigenvalue 0.
         missing = state_space.dimension - len(eigenpairs)
+        complement = np.linalg.qr(eigenvectors, mode="complete").Q[:, len(eigenpairs) :]
         eigenvalues = np.concatenate([eigenvalues, np.zeros(missing, dtype=complex)])
-        return Operator(state_space, matrix, eigenvalues=eigenvalues, is_normal=True)
+        eigenvectors = np.hstack([eigenvectors, complement])
+        return Operator._from_eigenbasis(state_space, eigenvalues, eigenvectors)
+
+    @staticmethod
+    def _from_eigenbasis(
+        state_space: StateSpace, eigenvalues: np.ndarray, eigenvectors: np.ndarray
+    ) -> Operator:
+        matrix = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.conj().T
+        return Operator(
+            state_space,
+            matrix,
+            eigenvalues=eigenvalues,
+            eigenvectors=eigenvectors,
+            is_normal=True,
+        )
+
+    def _compute_eigenbasis(self) -> None:
+        if not self.is_normal:
+            raise ValueError("Only normal operators have an orthonormal basis of eigenvectors")
+        if np.allclose(self.matrix, self.matrix.conj().T):
+            eigenvalues, eigenvectors = np.linalg.eigh(self.matrix)
+        else:
+            eigenvalues, eigenvectors = np.linalg.eig(self.matrix)
+            # A normal operator's eigenspaces are mutually orthogonal,
+            # so orthonormalizing keeps every vector inside its own eigenspace.
+            eigenvectors = np.linalg.qr(eigenvectors).Q
+        self._eigenvalues = frozen(eigenvalues.astype(complex))
+        self._eigenvectors = frozen(eigenvectors)
 
     @property
     def eigenvalues(self) -> np.ndarray:
         if self._eigenvalues is None:
-            self._eigenvalues = frozen(np.linalg.eigvals(self.matrix))
+            if self.is_normal:
+                self._compute_eigenbasis()
+            else:
+                self._eigenvalues = frozen(np.linalg.eigvals(self.matrix))
         return self._eigenvalues
+
+    @property
+    def eigenvectors(self) -> list[StateSpaceVector]:
+        if self._eigenvectors is None:
+            self._compute_eigenbasis()
+        return [
+            StateSpaceVector(self.state_space, column[:, np.newaxis])
+            for column in self._eigenvectors.T
+        ]
+
+    # Pass the scale as factor rather than scaling first: that reuses the cached eigenbasis.
+    def exp(self, factor: complex = 1) -> Operator:
+        if self._eigenvectors is None:
+            self._compute_eigenbasis()
+        return Operator._from_eigenbasis(
+            self.state_space, np.exp(factor * self._eigenvalues), self._eigenvectors
+        )
 
     @property
     def is_normal(self) -> bool:
@@ -135,6 +188,9 @@ class Operator:
         if other.state_space != self.state_space:
             raise ValueError("Bra must be from the operator's state space")
         return StateSpaceVector(self.state_space, other.components @ self.matrix)
+
+    def trace(self) -> complex:
+        return complex(np.trace(self.matrix))
 
     def expectation(self, state: StateSpaceVector) -> float:
         if not self.is_hermitian:
