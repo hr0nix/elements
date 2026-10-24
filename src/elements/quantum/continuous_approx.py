@@ -25,7 +25,7 @@ class CyclicalGrid1DStateSpace(StateSpace):
         # Enough decimals that neighbouring ticks never round to the same label.
         decimals = max(2, int(np.ceil(-np.log10(self.dx))) + 1)
         labels = [f"{tick:.{decimals}f}" for tick in self.ticks]
-        super().__init__(labels)
+        super().__init__(*labels)
 
     @property
     def min_x(self) -> float:

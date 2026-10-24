@@ -5,7 +5,7 @@ from elements.quantum.state import StateSpace
 
 
 class Spin:
-    state_space = StateSpace(labels=["u", "d"])
+    state_space = StateSpace("u", "d")
 
     z_plus = state_space.ket("u")
     z_minus = state_space.ket("d")

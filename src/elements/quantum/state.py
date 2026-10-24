@@ -18,9 +18,11 @@ if TYPE_CHECKING:
 
 class StateSpace:
     # Factors are kept flat, so (A ⊗ B) ⊗ C and A ⊗ (B ⊗ C) are the same space.
-    def __init__(self, labels: list[str], *, factors: Sequence[StateSpace] | None = None):
+    def __init__(self, *labels: str, factors: Sequence[StateSpace] | None = None):
         if len(labels) == 0:
             raise ValueError("State space must have at least one label")
+        if not all(isinstance(label, str) for label in labels):
+            raise TypeError("Labels must be strings; unpack a list of them with *")
         if len(set(labels)) != len(labels):
             raise ValueError("Labels must be unique")
         self._labels = tuple(labels)
@@ -41,7 +43,7 @@ class StateSpace:
         # Plain concatenation can be ambiguous, e.g. "1" + "12" == "11" + "2".
         if len(set(labels)) != len(labels):
             labels = [",".join(combination) for combination in combinations]
-        return StateSpace(labels, factors=factors)
+        return StateSpace(*labels, factors=factors)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, StateSpace):

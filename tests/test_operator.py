@@ -178,7 +178,7 @@ def test_hermitian_operators_list_their_eigenpairs_by_increasing_eigenvalue():
 def test_real_symmetric_operators_get_real_eigenvectors():
     rng = np.random.default_rng(2)
     values = rng.normal(size=(6, 6))
-    operator = Operator(StateSpace([str(label) for label in range(6)]), values + values.T)
+    operator = Operator(StateSpace(*(str(label) for label in range(6))), values + values.T)
     for value, vector in zip(operator.eigenvalues, operator.eigenbasis, strict=True):
         assert not vector.components.imag.any()
         assert (operator @ vector).close_to(vector * value)

@@ -52,42 +52,47 @@ def test_tensor_products_remember_their_factors_regardless_of_grouping():
 
 
 def test_a_space_with_product_like_labels_is_not_a_product_space():
-    flat = StateSpace(list(TwoSpins.state_space.labels))
+    flat = StateSpace(*TwoSpins.state_space.labels)
     assert flat.labels == TwoSpins.state_space.labels
     assert flat != TwoSpins.state_space
 
 
 def test_separately_built_spaces_with_the_same_labels_are_equal():
-    assert StateSpace(["u", "d"]) == StateSpace(["u", "d"])
-    assert StateSpace(["u", "d"]) != StateSpace(["d", "u"])
+    assert StateSpace("u", "d") == StateSpace("u", "d")
+    assert StateSpace("u", "d") != StateSpace("d", "u")
 
 
 def test_a_product_space_can_be_given_its_own_labels():
     spin = Spin.state_space
-    arrows = StateSpace(["↑↑", "↑↓", "↓↑", "↓↓"], factors=[spin, spin])
+    arrows = StateSpace("↑↑", "↑↓", "↓↑", "↓↓", factors=[spin, spin])
     assert arrows.factors == (spin, spin)
     assert arrows != TwoSpins.state_space
-    three_spins = StateSpace([str(i) for i in range(8)], factors=[TwoSpins.state_space, spin])
+    three_spins = StateSpace(*(str(i) for i in range(8)), factors=[TwoSpins.state_space, spin])
     assert three_spins.factors == (spin, spin, spin)
 
 
 def test_equal_state_spaces_can_stand_for_each_other_as_dictionary_keys():
     spin = Spin.state_space
-    rebuilt = StateSpace(["u", "d"]).tensor_product(StateSpace(["u", "d"]))
+    rebuilt = StateSpace("u", "d").tensor_product(StateSpace("u", "d"))
     assert {TwoSpins.state_space: "two spins"}[rebuilt] == "two spins"
-    assert hash(StateSpace(["u", "d"])) == hash(spin)
+    assert hash(StateSpace("u", "d")) == hash(spin)
 
 
 def test_factor_dimensions_must_multiply_to_the_number_of_labels():
     spin = Spin.state_space
     with pytest.raises(ValueError, match="product of the factor dimensions"):
-        StateSpace(["a", "b", "c"], factors=[spin, spin])
+        StateSpace("a", "b", "c", factors=[spin, spin])
 
 
 def test_factors_can_be_omitted_but_not_empty():
-    assert StateSpace(["a"]).factors == (StateSpace(["a"]),)
+    assert StateSpace("a").factors == (StateSpace("a"),)
     with pytest.raises(ValueError, match="at least one factor"):
-        StateSpace(["a"], factors=[])
+        StateSpace("a", factors=[])
+
+
+def test_labels_are_written_out_one_by_one():
+    with pytest.raises(TypeError, match="unpack"):
+        StateSpace(["u", "d"])
 
 
 def test_singlet_and_triplets_form_an_orthonormal_basis():
