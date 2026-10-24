@@ -1,30 +1,44 @@
+import itertools
+import math
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from elements.math.typechecks import is_bra_vector, is_complex_vector, is_ket_vector
 from elements.math.utils import DEFAULT_TOLERANCE, frozen
+from elements.util.formatting import split_sign
 
 if TYPE_CHECKING:
     from elements.quantum.operator import Operator
 
 
 class StateSpace:
-    def __init__(self, labels: list[str]):
+    # Factors are kept flat, so (A ⊗ B) ⊗ C and A ⊗ (B ⊗ C) are the same space.
+    def __init__(self, labels: list[str], *, factors: Sequence[StateSpace] | None = None):
         if len(labels) == 0:
             raise ValueError("State space must have at least one label")
         if len(set(labels)) != len(labels):
             raise ValueError("Labels must be unique")
-
         self._labels = tuple(labels)
 
+        if factors is None:
+            self._factors = (self,)
+            return
+        if len(factors) == 0:
+            raise ValueError("A product space needs at least one factor")
+        self._factors = tuple(atom for factor in factors for atom in factor.factors)
+        if math.prod(atom.dimension for atom in self._factors) != len(labels):
+            raise ValueError("Number of labels must match the product of the factor dimensions")
+
     def tensor_product(self, other: StateSpace) -> StateSpace:
-        pairs = [(label1, label2) for label1 in self._labels for label2 in other._labels]
-        labels = [f"{label1}{label2}" for label1, label2 in pairs]
+        factors = self.factors + other.factors
+        combinations = list(itertools.product(*(factor.labels for factor in factors)))
+        labels = ["".join(combination) for combination in combinations]
         # Plain concatenation can be ambiguous, e.g. "1" + "12" == "11" + "2".
         if len(set(labels)) != len(labels):
-            labels = [f"{label1},{label2}" for label1, label2 in pairs]
-        return StateSpace(labels)
+            labels = [",".join(combination) for combination in combinations]
+        return StateSpace(labels, factors=factors)
 
     def __len__(self) -> int:
         return len(self._labels)
@@ -32,11 +46,19 @@ class StateSpace:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, StateSpace):
             return NotImplemented
-        return self._labels == other._labels
+        # Comparing the factors themselves would recurse forever: an elementary space is its own
+        # factor. Factors are always elementary, so their labels identify them.
+        factor_labels = [factor.labels for factor in self._factors]
+        other_factor_labels = [factor.labels for factor in other._factors]
+        return self._labels == other._labels and factor_labels == other_factor_labels
 
     @property
     def labels(self) -> tuple[str, ...]:
         return self._labels
+
+    @property
+    def factors(self) -> tuple[StateSpace, ...]:
+        return self._factors
 
     @property
     def dimension(self) -> int:
@@ -152,10 +174,16 @@ class StateSpaceVector:
 
     def __repr__(self) -> str:
         left, right = ("|", ">") if self.is_ket else ("<", "|")
-        sum = " + ".join(
-            f"{coefficient:.2f}{left}{label}{right}"
+        terms = [
+            (*split_sign(coefficient), label)
             for coefficient, label in zip(
                 self.components.ravel(), self.state_space.labels, strict=True
             )
+            if abs(coefficient) > DEFAULT_TOLERANCE
+        ]
+        if not terms:
+            return "0"
+        text = "".join(
+            f" {sign} {magnitude}{left}{label}{right}" for sign, magnitude, label in terms
         )
-        return f"{sum}"
+        return text[3:] if text.startswith(" + ") else f"-{text[3:]}"

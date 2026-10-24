@@ -13,6 +13,8 @@ class Spin:
     x_minus = (z_plus - z_minus) / np.sqrt(2)
     y_plus = (z_plus + 1j * z_minus) / np.sqrt(2)
     y_minus = (z_plus - 1j * z_minus) / np.sqrt(2)
+    up = z_plus
+    down = z_minus
 
     identity = Operator.identity(state_space)
     sigma_x = Operator.spectral([(+1, x_plus), (-1, x_minus)])
@@ -23,10 +25,10 @@ class Spin:
 class TwoSpins:
     state_space = Spin.state_space.tensor_product(Spin.state_space)
 
-    uu = Spin.z_plus.kronecker_product(Spin.z_plus)
-    ud = Spin.z_plus.kronecker_product(Spin.z_minus)
-    du = Spin.z_minus.kronecker_product(Spin.z_plus)
-    dd = Spin.z_minus.kronecker_product(Spin.z_minus)
+    uu = Spin.up.kronecker_product(Spin.up)
+    ud = Spin.up.kronecker_product(Spin.down)
+    du = Spin.down.kronecker_product(Spin.up)
+    dd = Spin.down.kronecker_product(Spin.down)
 
     singlet = (ud - du) / np.sqrt(2)
     triplet_1 = (ud + du) / np.sqrt(2)

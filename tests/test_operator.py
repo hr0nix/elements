@@ -67,6 +67,36 @@ def test_kronecker_product_builds_operators_on_a_pair_of_spins():
     assert (flip_both @ ud).close_to(du)
 
 
+def test_partial_trace_of_a_product_scales_the_kept_factor_by_the_trace_of_the_rest():
+    a, b = sigma_x + 2 * identity, sigma_y + 3 * identity
+    product = a.kronecker_product(b)
+    assert product.partial_trace(keep=0).close_to(b.trace() * a)
+    assert product.partial_trace(keep=1).close_to(a.trace() * b)
+
+
+def test_partial_trace_keeps_several_factors_in_their_original_order():
+    a, b, c = sigma_x + 2 * identity, sigma_y + 3 * identity, sigma_z + 4 * identity
+    product = a.kronecker_product(b).kronecker_product(c)
+    assert product.partial_trace(keep=1).close_to(a.trace() * c.trace() * b)
+    assert product.partial_trace(keep=[0, 2]).close_to(b.trace() * a.kronecker_product(c))
+    assert product.partial_trace(keep=[2, 0]).close_to(b.trace() * a.kronecker_product(c))
+    assert product.partial_trace(keep=[0, 1, 2]).close_to(product)
+
+
+def test_each_half_of_a_singlet_is_maximally_mixed():
+    singlet = TwoSpins.singlet @ TwoSpins.singlet.dagger
+    for kept in (0, 1):
+        assert singlet.partial_trace(keep=kept).close_to(identity / 2)
+
+
+def test_partial_trace_rejects_unknown_factors_and_keeping_nothing():
+    two_spins = identity.kronecker_product(identity)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        two_spins.partial_trace(keep=2)
+    with pytest.raises(ValueError, match="at least one factor"):
+        two_spins.partial_trace(keep=[])
+
+
 @pytest.mark.parametrize(
     ("operator", "hermitian", "unitary"),
     [

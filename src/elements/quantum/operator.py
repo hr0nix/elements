@@ -1,3 +1,4 @@
+import functools
 from collections.abc import Sequence
 from numbers import Number
 
@@ -191,6 +192,25 @@ class Operator:
 
     def trace(self) -> complex:
         return complex(np.trace(self.matrix))
+
+    def partial_trace(self, keep: int | Sequence[int]) -> Operator:
+        factors = self.state_space.factors
+        kept = {keep} if isinstance(keep, int) else set(keep)
+        if not kept <= set(range(len(factors))):
+            raise ValueError(f"Factor indices must be between 0 and {len(factors) - 1}")
+        if not kept:
+            raise ValueError("Partial trace must keep at least one factor; use trace() instead")
+
+        # Axes are (row of each factor..., column of each factor...). Tracing from the last
+        # factor down leaves the row axes of the earlier factors where they were.
+        tensor = self.matrix.reshape([factor.dimension for factor in factors] * 2)
+        for index in reversed(range(len(factors))):
+            if index not in kept:
+                tensor = np.trace(tensor, axis1=index, axis2=index + tensor.ndim // 2)
+        # Kept factors stay in their original order, whatever order keep lists them in.
+        kept_factors = [factors[index] for index in sorted(kept)]
+        space = functools.reduce(StateSpace.tensor_product, kept_factors)
+        return Operator(space, tensor.reshape(space.dimension, space.dimension))
 
     def expectation(self, state: StateSpaceVector) -> float:
         if not self.is_hermitian:
