@@ -52,6 +52,9 @@ class StateSpace:
         other_factor_labels = [factor.labels for factor in other._factors]
         return self._labels == other._labels and factor_labels == other_factor_labels
 
+    def __hash__(self) -> int:
+        return hash((self._labels, tuple(factor.labels for factor in self._factors)))
+
     @property
     def labels(self) -> tuple[str, ...]:
         return self._labels

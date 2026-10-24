@@ -130,6 +130,56 @@ def test_packet_on_the_seam_is_a_rotated_packet_from_inside_the_grid():
     assert np.allclose(at_seam.components, np.roll(inside.components, -100))
 
 
+def test_position_wavefunction_is_the_normalized_continuum_gaussian():
+    state = CyclicalGrid1DStateSpace(-20.0, 20.0, 401)
+    packet = WaveFunctions1D.packet(state, x0=-3.0, p0=2.0, sigma=1.0)
+    x, psi = WaveFunctions1D.position_wavefunction(packet)
+    assert np.allclose(x, state.ticks)
+    assert np.sum(np.abs(psi) ** 2) * state.dx == pytest.approx(1.0)
+    expected = (2 * np.pi) ** -0.25 * np.exp(-((x + 3.0) ** 2) / 4)
+    assert np.allclose(np.abs(psi), expected)
+
+
+def test_momentum_wavefunction_is_the_fourier_transform_of_the_packet():
+    state = CyclicalGrid1DStateSpace(-20.0, 20.0, 401)
+    packet = WaveFunctions1D.packet(state, x0=-3.0, p0=2.0, sigma=1.0)
+    p, phi = WaveFunctions1D.momentum_wavefunction(packet)
+    assert np.all(np.diff(p) > 0)
+    assert np.sum(np.abs(phi) ** 2) * (p[1] - p[0]) == pytest.approx(1.0)
+    expected = (2 / np.pi) ** 0.25 * np.exp(-((p - 2.0) ** 2))
+    assert np.allclose(np.abs(phi), expected)
+
+
+def test_projections_on_momentum_eigenvectors_are_an_fft_up_to_a_phase():
+    state = CyclicalGrid1DStateSpace(-3.0, 4.0, 21)
+    rng = np.random.default_rng(1)
+    components = rng.normal(size=21) + 1j * rng.normal(size=21)
+    p, phi = WaveFunctions1D.momentum_wavefunction(ket(state, components).normalized)
+    fourier = np.fft.fftshift(np.fft.fft(components / np.linalg.norm(components), norm="ortho"))
+    dp = 2 * np.pi / state.length
+    assert np.allclose(phi * np.sqrt(dp), np.exp(-1j * p * state.min_x) * fourier)
+
+
+def test_wavefunctions_need_a_hermitian_operator_with_evenly_spaced_eigenvalues():
+    state = CyclicalGrid1DStateSpace(-3.0, 4.0, 21)
+    packet = WaveFunctions1D.packet(state, 0.5, 1.0, 0.7)
+    with pytest.raises(ValueError, match="Hermitian"):
+        WaveFunctions1D._wavefunction_in_eigenbasis(Operators1D.translation(state, 0.3), packet)
+    with pytest.raises(ValueError, match="evenly spaced"):
+        WaveFunctions1D._wavefunction_in_eigenbasis(Operators1D.momentum_squared(state), packet)
+
+
+def test_factories_hand_back_the_same_object_for_equal_arguments():
+    state = CyclicalGrid1DStateSpace(-3.0, 4.0, 21)
+    same_grid = CyclicalGrid1DStateSpace(-3.0, 4.0, 21)
+    assert Operators1D.momentum(state) is Operators1D.momentum(same_grid)
+    assert Operators1D.kinetic_energy(state, 2.0) is Operators1D.kinetic_energy(state, 2.0)
+    assert WaveFunctions1D.packet(state, 0.5, 1.0, 0.7) is WaveFunctions1D.packet(
+        state, 0.5, 1.0, 0.7
+    )
+    assert Operators1D.kinetic_energy(state, 2.0) is not Operators1D.kinetic_energy(state, 3.0)
+
+
 def test_harmonic_oscillator_energies_are_half_integers():
     state = CyclicalGrid1DStateSpace(-10.0, 10.0, 257)
     hamiltonian = Operators1D.hamiltonian(state, mass=1.0, v=lambda x: 0.5 * x**2)

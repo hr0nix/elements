@@ -64,6 +64,13 @@ def test_a_product_space_can_be_given_its_own_labels():
     assert three_spins.factors == (spin, spin, spin)
 
 
+def test_equal_state_spaces_can_stand_for_each_other_as_dictionary_keys():
+    spin = Spin.state_space
+    rebuilt = StateSpace(["u", "d"]).tensor_product(StateSpace(["u", "d"]))
+    assert {TwoSpins.state_space: "two spins"}[rebuilt] == "two spins"
+    assert hash(StateSpace(["u", "d"])) == hash(spin)
+
+
 def test_factor_dimensions_must_multiply_to_the_number_of_labels():
     spin = Spin.state_space
     with pytest.raises(ValueError, match="product of the factor dimensions"):
