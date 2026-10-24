@@ -90,14 +90,17 @@ class Operator:
         if not self.is_normal:
             raise ValueError("Only normal operators have an orthonormal basis of eigenvectors")
         if np.allclose(self.matrix, self.matrix.conj().T):
-            eigenvalues, eigenvectors = np.linalg.eigh(self.matrix)
+            # A complex solver returns each eigenvector times an arbitrary phase, even when the
+            # matrix is real and a real eigenvector exists, as for any real potential.
+            real = np.allclose(self.matrix.imag, 0.0)
+            eigenvalues, eigenvectors = np.linalg.eigh(self.matrix.real if real else self.matrix)
         else:
             eigenvalues, eigenvectors = np.linalg.eig(self.matrix)
             # A normal operator's eigenspaces are mutually orthogonal,
             # so orthonormalizing keeps every vector inside its own eigenspace.
             eigenvectors = np.linalg.qr(eigenvectors).Q
         self._eigenvalues = frozen(eigenvalues.astype(complex))
-        self._eigenvectors = frozen(eigenvectors)
+        self._eigenvectors = frozen(eigenvectors.astype(complex))
 
     @property
     def eigenvalues(self) -> np.ndarray:

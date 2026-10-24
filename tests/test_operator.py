@@ -6,6 +6,7 @@ import pytest
 
 from elements.quantum.operator import Operator
 from elements.quantum.spin import Spin, TwoSpins
+from elements.quantum.state import StateSpace
 
 sigma_x, sigma_y, sigma_z = Spin.sigma_x, Spin.sigma_y, Spin.sigma_z
 identity = Spin.identity
@@ -144,6 +145,15 @@ def test_operator_is_rebuilt_from_its_own_eigenpairs(operator):
     for value, vector in eigenpairs:
         assert (operator @ vector).close_to(vector * value)
     assert Operator.spectral(eigenpairs).close_to(operator)
+
+
+def test_real_symmetric_operators_get_real_eigenvectors():
+    rng = np.random.default_rng(2)
+    values = rng.normal(size=(6, 6))
+    operator = Operator(StateSpace([str(label) for label in range(6)]), values + values.T)
+    vectors = np.hstack([vector.components for vector in operator.eigenvectors])
+    assert not vectors.imag.any()
+    assert np.allclose(operator.matrix @ vectors, vectors * operator.eigenvalues)
 
 
 def test_non_normal_operators_have_no_eigenbasis_to_exponentiate():
