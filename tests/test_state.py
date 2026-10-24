@@ -30,9 +30,16 @@ def test_spin_prepared_along_one_axis_is_a_coin_flip_along_another():
 
 def test_inner_product_of_product_states_factorizes():
     a, b, c, d = Spin.x_plus, Spin.y_minus, Spin.z_plus, Spin.x_plus
-    combined = a.kronecker_product(b).dagger @ c.kronecker_product(d)
+    combined = a.tensor_product(b).dagger @ c.tensor_product(d)
     separate = (a.dagger @ c) * (b.dagger @ d)
     assert combined == pytest.approx(separate)
+
+
+def test_basis_kets_of_a_product_space_are_products_of_basis_kets():
+    spin = Spin.state_space
+    for first, second in itertools.product(spin.labels, repeat=2):
+        product = spin.ket(first).tensor_product(spin.ket(second))
+        assert TwoSpins.state_space.ket(first + second).close_to(product)
 
 
 def test_tensor_products_remember_their_factors_regardless_of_grouping():

@@ -1,15 +1,18 @@
+import functools
 import itertools
 import math
 from collections.abc import Sequence
+from numbers import Number
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from elements.math.typechecks import is_bra_vector, is_ket_vector, is_vector
-from elements.math.utils import DEFAULT_TOLERANCE, frozen
+from elements.math.utils import DEFAULT_TOLERANCE, frozen, nearly_equal
 from elements.util.formatting import split_sign
 
 if TYPE_CHECKING:
+    from elements.quantum.basis import Basis
     from elements.quantum.operator import Operator
 
 
@@ -31,17 +34,14 @@ class StateSpace:
         if math.prod(atom.dimension for atom in self._factors) != len(labels):
             raise ValueError("Number of labels must match the product of the factor dimensions")
 
-    def tensor_product(self, other: StateSpace) -> StateSpace:
-        factors = self.factors + other.factors
+    def tensor_product(self, *others: StateSpace) -> StateSpace:
+        factors = [factor for space in (self, *others) for factor in space.factors]
         combinations = list(itertools.product(*(factor.labels for factor in factors)))
         labels = ["".join(combination) for combination in combinations]
         # Plain concatenation can be ambiguous, e.g. "1" + "12" == "11" + "2".
         if len(set(labels)) != len(labels):
             labels = [",".join(combination) for combination in combinations]
         return StateSpace(labels, factors=factors)
-
-    def __len__(self) -> int:
-        return len(self._labels)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, StateSpace):
@@ -67,6 +67,19 @@ class StateSpace:
     def dimension(self) -> int:
         return len(self._labels)
 
+    # The kets |label>, in the order of the labels. Components of vectors and matrices of
+    # operators are written in this basis.
+    @functools.cached_property
+    def basis(self) -> Basis:
+        from elements.quantum.basis import Basis
+
+        return Basis.from_columns(self, np.eye(self.dimension))
+
+    def ket(self, label: str) -> StateSpaceVector:
+        if label not in self._labels:
+            raise ValueError(f"No basis ket is labelled {label!r}")
+        return self.basis[self._labels.index(label)]
+
     def __repr__(self) -> str:
         return f"StateSpace({', '.join(f'|{label}>' for label in self._labels)})"
 
@@ -77,7 +90,7 @@ class StateSpaceVector:
         if not is_vector(components):
             raise ValueError("Components must be a bra or ket vector")
         if components.size != state_space.dimension:
-            raise ValueError("Number of coefficients must match number of labels")
+            raise ValueError("Number of components must match the dimension of the state space")
 
         self.state_space = state_space
         self.components = frozen(components)
@@ -102,25 +115,28 @@ class StateSpaceVector:
     def close_to(self, other: StateSpaceVector, tolerance: float = DEFAULT_TOLERANCE) -> bool:
         if not self.is_compatible(other):
             return False
-        return np.allclose(self.components, other.components, rtol=0.0, atol=tolerance)
+        return nearly_equal(self.components, other.components, tolerance)
 
     @property
     def norm(self) -> float:
-        return float(np.linalg.norm(self.components))
+        ket = self if self.is_ket else self.dagger
+        return math.sqrt((ket.dagger @ ket).real)
 
     @property
     def normalized(self) -> StateSpaceVector:
-        return self * (1.0 / self.norm)
+        return self / self.norm
 
     @property
     def is_normalized(self) -> bool:
-        return np.isclose(self.norm, 1.0)
+        return nearly_equal(self.norm, 1.0)
 
     def __mul__(self, other: complex) -> StateSpaceVector:
+        if not isinstance(other, Number):
+            return NotImplemented
         return StateSpaceVector(self.state_space, self.components * other)
 
     def __rmul__(self, other: complex) -> StateSpaceVector:
-        return StateSpaceVector(self.state_space, self.components * other)
+        return self * other
 
     def __truediv__(self, other: complex) -> StateSpaceVector:
         return self * (1 / other)
@@ -134,15 +150,15 @@ class StateSpaceVector:
         return StateSpaceVector(self.state_space, self.components + other.components)
 
     def __sub__(self, other: StateSpaceVector) -> StateSpaceVector:
-        return self + (-1) * other
+        return self + (-other)
 
-    def kronecker_product(self, other: StateSpaceVector) -> StateSpaceVector:
-        if not self.is_bra_ket_compatible(other):
-            raise ValueError("Kronecker product of states requires two kets or two bras")
+    def tensor_product(self, *others: StateSpaceVector) -> StateSpaceVector:
+        if not all(self.is_bra_ket_compatible(other) for other in others):
+            raise ValueError("Tensor product of states requires all kets or all bras")
 
         return StateSpaceVector(
-            self.state_space.tensor_product(other.state_space),
-            np.kron(self.components, other.components),
+            self.state_space.tensor_product(*(other.state_space for other in others)),
+            functools.reduce(np.kron, [other.components for other in others], self.components),
         )
 
     @property

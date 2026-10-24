@@ -1,107 +1,87 @@
 import functools
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from numbers import Number
 
 import numpy as np
 
-from elements.math.utils import DEFAULT_TOLERANCE, frozen
+from elements.math.utils import DEFAULT_TOLERANCE, frozen, nearly_equal
+from elements.quantum.basis import Basis
 from elements.quantum.state import StateSpace, StateSpaceVector
 
 
 class Operator:
-    # eigenvalues, eigenvectors and is_normal are trusted as caches: pass them only when known
-    # exactly. eigenvectors are the orthonormal columns of a matrix, ordered like eigenvalues.
-    def __init__(
-        self,
-        state_space: StateSpace,
-        matrix: np.ndarray,
-        *,
-        eigenvalues: np.ndarray | None = None,
-        eigenvectors: np.ndarray | None = None,
-        is_normal: bool | None = None,
-    ):
+    # Eigenvalues and the eigenbasis are computed on first use and cached. Operators built from
+    # a basis, or from another operator whose eigenbasis is known, start with them cached.
+    def __init__(self, state_space: StateSpace, matrix: np.ndarray):
         dimension = state_space.dimension
         matrix = np.asarray(matrix, dtype=complex)
         if matrix.shape != (dimension, dimension):
             raise ValueError("Matrix must be square, matching the state space")
-        if eigenvectors is not None and eigenvalues is None:
-            raise ValueError("Eigenvectors must come with the eigenvalues they belong to")
 
         self.state_space = state_space
         self.matrix = frozen(matrix)
-        self._eigenvalues = (
-            None if eigenvalues is None else frozen(np.asarray(eigenvalues, dtype=complex))
-        )
-        self._eigenvectors = (
-            None if eigenvectors is None else frozen(np.asarray(eigenvectors, dtype=complex))
-        )
-        self._is_normal = is_normal
+        self._eigenvalues: np.ndarray | None = None
+        self._eigenbasis: Basis | None = None
+        self._is_normal: bool | None = None
 
+    # sum_i values_i |b_i><b_i|: the operator that is diagonal in the basis, with the given values
+    # along its diagonal.
     @staticmethod
-    def diagonal(state_space: StateSpace, values: np.ndarray) -> Operator:
-        if len(values) != state_space.dimension:
-            raise ValueError("Values must have the same dimension as the state space")
-        return Operator(
-            state_space,
-            np.diag(values),
-            eigenvalues=values,
-            eigenvectors=np.eye(state_space.dimension, dtype=complex),
-            is_normal=True,
-        )
+    def diagonal(basis: Basis, values: np.ndarray) -> Operator:
+        values = np.asarray(values)
+        if values.shape != (len(basis),):
+            raise ValueError("A diagonal operator needs one value per basis ket")
+        matrix = (basis.matrix * values) @ basis.matrix.conj().T
+        return Operator(basis.state_space, matrix)._remember_eigenbasis(values, basis)
 
     @staticmethod
     def identity(state_space: StateSpace) -> Operator:
-        return Operator.diagonal(state_space, np.ones(state_space.dimension, dtype=complex))
+        return Operator.diagonal(state_space.basis, np.ones(state_space.dimension))
 
     @staticmethod
     def spectral(eigenpairs: Sequence[tuple[complex, StateSpaceVector]]) -> Operator:
         if len(eigenpairs) == 0:
             raise ValueError("Spectral decomposition requires at least one eigenpair")
-        state_space = eigenpairs[0][1].state_space
-        if not all(vector.is_ket and vector.state_space == state_space for _, vector in eigenpairs):
-            raise ValueError("Eigenvectors must be kets from the same state space")
-
-        eigenvalues = np.array([value for value, _ in eigenpairs], dtype=complex)
-        eigenvectors = np.hstack([vector.components for _, vector in eigenpairs])
-        if not np.allclose(eigenvectors.conj().T @ eigenvectors, np.eye(len(eigenpairs))):
-            raise ValueError("Eigenvectors must be orthonormal")
-
+        basis = Basis.completing([vector for _, vector in eigenpairs])
         # Directions not spanned by the eigenvectors get eigenvalue 0.
-        missing = state_space.dimension - len(eigenpairs)
-        complement = np.linalg.qr(eigenvectors, mode="complete").Q[:, len(eigenpairs) :]
-        eigenvalues = np.concatenate([eigenvalues, np.zeros(missing, dtype=complex)])
-        eigenvectors = np.hstack([eigenvectors, complement])
-        return Operator._from_eigenbasis(state_space, eigenvalues, eigenvectors)
+        missing = len(basis) - len(eigenpairs)
+        return Operator.diagonal(basis, [value for value, _ in eigenpairs] + [0] * missing)
 
+    # |psi><psi|, the density of the pure state psi: eigenvalue 1 on psi, 0 orthogonal to it.
     @staticmethod
-    def _from_eigenbasis(
-        state_space: StateSpace, eigenvalues: np.ndarray, eigenvectors: np.ndarray
-    ) -> Operator:
-        matrix = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.conj().T
-        return Operator(
-            state_space,
-            matrix,
-            eigenvalues=eigenvalues,
-            eigenvectors=eigenvectors,
-            is_normal=True,
-        )
+    def density(state: StateSpaceVector) -> Operator:
+        if not (state.is_ket and state.is_normalized):
+            raise ValueError("A density is built from a normalized ket")
+        return Operator.spectral([(1, state)])
+
+    # Hermitian operators keep their eigenpairs in order of increasing eigenvalue, with the
+    # eigenvalues stored as real numbers.
+    def _remember_eigenbasis(self, values: np.ndarray, basis: Basis) -> Operator:
+        values = np.asarray(values, dtype=complex)
+        if not values.imag.any():
+            order = np.argsort(values.real, kind="stable")
+            values, basis = values.real[order], basis.reordered(order)
+        self._eigenvalues = frozen(values)
+        self._eigenbasis = basis
+        self._is_normal = True
+        return self
 
     def _compute_eigenbasis(self) -> None:
         if not self.is_normal:
             raise ValueError("Only normal operators have an orthonormal basis of eigenvectors")
-        if np.allclose(self.matrix, self.matrix.conj().T):
+        if self.close_to(self.dagger):
             # A complex solver returns each eigenvector times an arbitrary phase, even when the
             # matrix is real and a real eigenvector exists, as for any real potential.
-            real = np.allclose(self.matrix.imag, 0.0)
-            eigenvalues, eigenvectors = np.linalg.eigh(self.matrix.real if real else self.matrix)
+            real = nearly_equal(self.matrix, self.matrix.real)
+            values, vectors = np.linalg.eigh(self.matrix.real if real else self.matrix)
         else:
-            eigenvalues, eigenvectors = np.linalg.eig(self.matrix)
+            values, vectors = np.linalg.eig(self.matrix)
             # A normal operator's eigenspaces are mutually orthogonal,
             # so orthonormalizing keeps every vector inside its own eigenspace.
-            eigenvectors = np.linalg.qr(eigenvectors).Q
-        self._eigenvalues = frozen(eigenvalues.astype(complex))
-        self._eigenvectors = frozen(eigenvectors.astype(complex))
+            vectors = np.linalg.qr(vectors).Q
+        self._remember_eigenbasis(values, Basis.from_columns(self.state_space, vectors))
 
+    # Real and increasing for Hermitian operators, in no particular order otherwise.
     @property
     def eigenvalues(self) -> np.ndarray:
         if self._eigenvalues is None:
@@ -111,53 +91,67 @@ class Operator:
                 self._eigenvalues = frozen(np.linalg.eigvals(self.matrix))
         return self._eigenvalues
 
+    # Ordered like the eigenvalues.
     @property
-    def eigenvectors(self) -> list[StateSpaceVector]:
-        if self._eigenvectors is None:
+    def eigenbasis(self) -> Basis:
+        if self._eigenbasis is None:
             self._compute_eigenbasis()
-        return [
-            StateSpaceVector(self.state_space, column[:, np.newaxis])
-            for column in self._eigenvectors.T
-        ]
+        return self._eigenbasis
 
-    # Pass the scale as factor rather than scaling first: that reuses the cached eigenbasis.
-    def exp(self, factor: complex = 1) -> Operator:
-        if self._eigenvectors is None:
-            self._compute_eigenbasis()
-        return Operator._from_eigenbasis(
-            self.state_space, np.exp(factor * self._eigenvalues), self._eigenvectors
-        )
+    # f(A) = sum_i f(lambda_i) |v_i><v_i|: the eigenvectors stay, each eigenvalue goes through f.
+    def map_eigenvalues(self, f: Callable[[np.ndarray], np.ndarray]) -> Operator:
+        return Operator.diagonal(self.eigenbasis, f(self.eigenvalues))
+
+    def exp(self) -> Operator:
+        return self.map_eigenvalues(np.exp)
 
     @property
     def is_normal(self) -> bool:
         if self._is_normal is None:
-            adjoint = self.matrix.conj().T
-            self._is_normal = np.allclose(self.matrix @ adjoint, adjoint @ self.matrix)
+            adjoint = self.dagger
+            self._is_normal = (self @ adjoint).close_to(adjoint @ self)
         return self._is_normal
 
     # Eigenvalues decide these only for normal matrices: [[1, 1], [0, 1]] has eigenvalues {1, 1}.
     @property
     def is_hermitian(self) -> bool:
-        return self.is_normal and np.allclose(self.eigenvalues.imag, 0.0)
+        return self.is_normal and nearly_equal(self.eigenvalues, self.eigenvalues.real)
 
     @property
     def is_unitary(self) -> bool:
-        return self.is_normal and np.allclose(np.abs(self.eigenvalues), 1.0)
+        return self.is_normal and nearly_equal(np.abs(self.eigenvalues), 1.0)
 
-    def kronecker_product(self, other: Operator) -> Operator:
-        return Operator(
-            self.state_space.tensor_product(other.state_space),
-            np.kron(self.matrix, other.matrix),
+    # Its eigenvalues are the probabilities of a mixture of its eigenvectors.
+    @property
+    def is_density(self) -> bool:
+        return (
+            self.is_hermitian
+            and nearly_equal(self.trace(), 1.0)
+            and bool(np.all(self.eigenvalues >= -DEFAULT_TOLERANCE))
         )
 
+    def tensor_product(self, *others: Operator) -> Operator:
+        return Operator(
+            self.state_space.tensor_product(*(other.state_space for other in others)),
+            functools.reduce(np.kron, [other.matrix for other in others], self.matrix),
+        )
+
+    # A normal operator's adjoint has the same eigenvectors, with conjugated eigenvalues.
     @property
     def dagger(self) -> Operator:
-        return Operator(self.state_space, self.matrix.conj().T)
+        adjoint = Operator(self.state_space, self.matrix.conj().T)
+        if self._eigenbasis is not None:
+            adjoint._remember_eigenbasis(self._eigenvalues.conj(), self._eigenbasis)
+        return adjoint
 
+    # Scaling keeps the eigenvectors and scales the eigenvalues.
     def __mul__(self, other: complex) -> Operator:
         if not isinstance(other, Number):
             return NotImplemented
-        return Operator(self.state_space, self.matrix * other)
+        product = Operator(self.state_space, self.matrix * other)
+        if self._eigenbasis is not None:
+            product._remember_eigenbasis(self._eigenvalues * other, self._eigenbasis)
+        return product
 
     def __rmul__(self, other: complex) -> Operator:
         return self * other
@@ -205,6 +199,12 @@ class Operator:
     def trace(self) -> complex:
         return complex(np.trace(self.matrix))
 
+    # tr(rho^2): 1 for a pure state, down to 1 / dimension for the most mixed one.
+    def purity(self) -> float:
+        if not self.is_density:
+            raise ValueError("Purity is defined for densities")
+        return (self @ self).trace().real
+
     def partial_trace(self, keep: int | Sequence[int]) -> Operator:
         factors = self.state_space.factors
         kept = {keep} if isinstance(keep, int) else set(keep)
@@ -220,21 +220,27 @@ class Operator:
             if index not in kept:
                 tensor = np.trace(tensor, axis1=index, axis2=index + tensor.ndim // 2)
         # Kept factors stay in their original order, whatever order keep lists them in.
-        kept_factors = [factors[index] for index in sorted(kept)]
-        space = functools.reduce(StateSpace.tensor_product, kept_factors)
+        first, *rest = (factors[index] for index in sorted(kept))
+        space = first.tensor_product(*rest)
         return Operator(space, tensor.reshape(space.dimension, space.dimension))
 
-    def expectation(self, state: StateSpaceVector) -> float:
+    # <psi|A|psi> for a ket, tr(rho A) for a density operator rho, which also describes
+    # mixtures. The two agree for rho = |psi><psi|.
+    def expectation(self, state: StateSpaceVector | Operator) -> float:
         if not self.is_hermitian:
             raise ValueError("Expectation values are defined for Hermitian operators")
+        if isinstance(state, Operator):
+            if not state.is_density:
+                raise ValueError("Expectation values require a normalized ket or a density")
+            return (state @ self).trace().real
         if not (state.is_ket and state.is_normalized):
-            raise ValueError("Expectation values require a normalized ket")
+            raise ValueError("Expectation values require a normalized ket or a density")
         return (state.dagger @ self @ state).real
 
     def close_to(self, other: Operator, tolerance: float = DEFAULT_TOLERANCE) -> bool:
         if self.state_space != other.state_space:
             return False
-        return np.allclose(self.matrix, other.matrix, rtol=0.0, atol=tolerance)
+        return nearly_equal(self.matrix, other.matrix, tolerance)
 
     def __repr__(self) -> str:
         return f"Operator on {self.state_space}\n{self.matrix}"

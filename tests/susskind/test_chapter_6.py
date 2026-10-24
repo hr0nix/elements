@@ -6,13 +6,13 @@ from elements.quantum.spin import Spin, TwoSpins
 from elements.quantum.evolution import EigenbasisEvolution
 
 sigma_x, sigma_y, sigma_z = Spin.sigma_x, Spin.sigma_y, Spin.sigma_z
-sigma_x_tau_x = sigma_x.kronecker_product(sigma_x)
-sigma_y_tau_y = sigma_y.kronecker_product(sigma_y)
-sigma_z_tau_z = sigma_z.kronecker_product(sigma_z)
+sigma_x_tau_x = sigma_x.tensor_product(sigma_x)
+sigma_y_tau_y = sigma_y.tensor_product(sigma_y)
+sigma_z_tau_z = sigma_z.tensor_product(sigma_z)
 
 
 def test_exercise_6_6():
-    sigma_x_tau_y = sigma_x.kronecker_product(sigma_y)
+    sigma_x_tau_y = sigma_x.tensor_product(sigma_y)
     assert sigma_x_tau_y.expectation(TwoSpins.singlet) == pytest.approx(0)
 
 

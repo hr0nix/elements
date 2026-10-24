@@ -11,9 +11,9 @@ from elements.quantum.state import StateSpace
 sigma_x, sigma_y, sigma_z = Spin.sigma_x, Spin.sigma_y, Spin.sigma_z
 identity = Spin.identity
 sigma_dot_tau = (
-    sigma_x.kronecker_product(sigma_x)
-    + sigma_y.kronecker_product(sigma_y)
-    + sigma_z.kronecker_product(sigma_z)
+    sigma_x.tensor_product(sigma_x)
+    + sigma_y.tensor_product(sigma_y)
+    + sigma_z.tensor_product(sigma_z)
 )
 
 
@@ -57,11 +57,33 @@ def test_expectation_requires_a_normalized_ket():
         sigma_z.expectation(Spin.z_plus.dagger)
 
 
-def test_kronecker_product_builds_operators_on_a_pair_of_spins():
+def test_a_mixture_is_a_density_whose_eigenvalues_are_the_probabilities():
+    mixture = Operator.spectral([(0.3, Spin.z_plus), (0.7, Spin.z_minus)])
+    assert mixture.is_density
+    assert sigma_z.expectation(mixture) == pytest.approx(0.3 * 1 + 0.7 * -1)
+    assert sigma_x.expectation(mixture) == pytest.approx(0)
+    with pytest.raises(ValueError, match="density"):
+        sigma_z.expectation(sigma_x)
+
+
+def test_a_pure_density_gives_the_expectations_of_its_ket():
+    pure = Operator.density(Spin.y_plus)
+    for sigma in (sigma_x, sigma_y, sigma_z):
+        assert sigma.expectation(pure) == pytest.approx(sigma.expectation(Spin.y_plus))
+
+
+def test_densities_come_from_normalized_kets_and_only_densities_have_a_purity():
+    with pytest.raises(ValueError, match="normalized ket"):
+        Operator.density(2 * Spin.z_plus)
+    with pytest.raises(ValueError, match="densities"):
+        sigma_x.purity()
+
+
+def test_tensor_product_builds_operators_on_a_pair_of_spins():
     ud, du = TwoSpins.ud, TwoSpins.du
-    sigma_z_on_first = sigma_z.kronecker_product(identity)
-    sigma_z_on_second = identity.kronecker_product(sigma_z)
-    flip_both = sigma_x.kronecker_product(sigma_x)
+    sigma_z_on_first = sigma_z.tensor_product(identity)
+    sigma_z_on_second = identity.tensor_product(sigma_z)
+    flip_both = sigma_x.tensor_product(sigma_x)
     assert (sigma_z_on_first @ ud).close_to(ud)
     assert (sigma_z_on_second @ ud).close_to(-ud)
     assert not (sigma_z_on_first @ ud).close_to(sigma_z_on_second @ ud)
@@ -70,17 +92,17 @@ def test_kronecker_product_builds_operators_on_a_pair_of_spins():
 
 def test_partial_trace_of_a_product_scales_the_kept_factor_by_the_trace_of_the_rest():
     a, b = sigma_x + 2 * identity, sigma_y + 3 * identity
-    product = a.kronecker_product(b)
+    product = a.tensor_product(b)
     assert product.partial_trace(keep=0).close_to(b.trace() * a)
     assert product.partial_trace(keep=1).close_to(a.trace() * b)
 
 
 def test_partial_trace_keeps_several_factors_in_their_original_order():
     a, b, c = sigma_x + 2 * identity, sigma_y + 3 * identity, sigma_z + 4 * identity
-    product = a.kronecker_product(b).kronecker_product(c)
+    product = a.tensor_product(b, c)
     assert product.partial_trace(keep=1).close_to(a.trace() * c.trace() * b)
-    assert product.partial_trace(keep=[0, 2]).close_to(b.trace() * a.kronecker_product(c))
-    assert product.partial_trace(keep=[2, 0]).close_to(b.trace() * a.kronecker_product(c))
+    assert product.partial_trace(keep=[0, 2]).close_to(b.trace() * a.tensor_product(c))
+    assert product.partial_trace(keep=[2, 0]).close_to(b.trace() * a.tensor_product(c))
     assert product.partial_trace(keep=[0, 1, 2]).close_to(product)
 
 
@@ -91,7 +113,7 @@ def test_each_half_of_a_singlet_is_maximally_mixed():
 
 
 def test_partial_trace_rejects_unknown_factors_and_keeping_nothing():
-    two_spins = identity.kronecker_product(identity)
+    two_spins = identity.tensor_product(identity)
     with pytest.raises(ValueError, match="between 0 and 1"):
         two_spins.partial_trace(keep=2)
     with pytest.raises(ValueError, match="at least one factor"):
@@ -140,26 +162,39 @@ def test_spectral_requires_orthonormal_eigenvectors():
     ],
 )
 def test_operator_is_rebuilt_from_its_own_eigenpairs(operator):
-    eigenpairs = list(zip(operator.eigenvalues, operator.eigenvectors, strict=True))
+    eigenpairs = list(zip(operator.eigenvalues, operator.eigenbasis, strict=True))
     assert len(eigenpairs) == operator.state_space.dimension
     for value, vector in eigenpairs:
         assert (operator @ vector).close_to(vector * value)
     assert Operator.spectral(eigenpairs).close_to(operator)
 
 
+def test_hermitian_operators_list_their_eigenpairs_by_increasing_eigenvalue():
+    assert list(sigma_z.eigenvalues) == [-1, 1]
+    assert sigma_z.eigenbasis[0].close_to(Spin.z_minus)
+    assert sigma_dot_tau.eigenvalues == pytest.approx([-3, 1, 1, 1])
+
+
 def test_real_symmetric_operators_get_real_eigenvectors():
     rng = np.random.default_rng(2)
     values = rng.normal(size=(6, 6))
     operator = Operator(StateSpace([str(label) for label in range(6)]), values + values.T)
-    vectors = np.hstack([vector.components for vector in operator.eigenvectors])
-    assert not vectors.imag.any()
-    assert np.allclose(operator.matrix @ vectors, vectors * operator.eigenvalues)
+    for value, vector in zip(operator.eigenvalues, operator.eigenbasis, strict=True):
+        assert not vector.components.imag.any()
+        assert (operator @ vector).close_to(vector * value)
+
+
+def test_functions_of_an_operator_act_on_its_eigenvalues():
+    hamiltonian = sigma_x + 2 * sigma_z
+    assert hamiltonian.map_eigenvalues(np.square).close_to(hamiltonian @ hamiltonian)
+    inverse = hamiltonian.map_eigenvalues(lambda energy: 1 / energy)
+    assert (hamiltonian @ inverse).close_to(identity)
 
 
 def test_non_normal_operators_have_no_eigenbasis_to_exponentiate():
     shear = identity + Spin.z_plus @ Spin.z_minus.dagger
     with pytest.raises(ValueError, match="normal"):
-        _ = shear.eigenvectors
+        _ = shear.eigenbasis
     with pytest.raises(ValueError, match="normal"):
         shear.exp()
 
@@ -176,20 +211,20 @@ def test_non_normal_operators_have_no_eigenbasis_to_exponentiate():
 def test_exponentials_of_operators_squaring_to_identity_have_a_closed_form(sigma):
     theta = 0.7
     closed_form = math.cos(theta) * identity - 1j * math.sin(theta) * sigma
-    assert sigma.exp(-1j * theta).close_to(closed_form)
+    assert (-1j * theta * sigma).exp().close_to(closed_form)
 
 
 def test_imaginary_exponentials_of_a_hermitian_operator_are_unitaries_whose_exponents_add():
     hamiltonian = sigma_x + 2 * sigma_z
-    evolution = hamiltonian.exp(-0.3j)
+    evolution = (-0.3j * hamiltonian).exp()
     assert (evolution.dagger @ evolution).close_to(identity)
-    assert (hamiltonian.exp(-0.1j) @ hamiltonian.exp(-0.2j)).close_to(evolution)
+    assert ((-0.1j * hamiltonian).exp() @ (-0.2j * hamiltonian).exp()).close_to(evolution)
 
 
 def test_spin_in_a_magnetic_field_along_z_precesses_around_it():
     omega, t = 2.0, 0.4
     hamiltonian = omega / 2 * sigma_z
-    state = hamiltonian.exp(-1j * t) @ Spin.x_plus
+    state = (-1j * t * hamiltonian).exp() @ Spin.x_plus
     assert sigma_x.expectation(state) == pytest.approx(math.cos(omega * t))
     assert sigma_y.expectation(state) == pytest.approx(math.sin(omega * t))
     assert sigma_z.expectation(state) == pytest.approx(0)
@@ -197,7 +232,7 @@ def test_spin_in_a_magnetic_field_along_z_precesses_around_it():
 
 def test_energy_eigenstates_only_pick_up_a_phase():
     t = 0.9
-    evolution = sigma_dot_tau.exp(-1j * t)
+    evolution = (-1j * t * sigma_dot_tau).exp()
     assert (evolution @ TwoSpins.singlet).close_to(cmath.exp(3j * t) * TwoSpins.singlet)
     for triplet in (TwoSpins.triplet_1, TwoSpins.triplet_2, TwoSpins.triplet_3):
         assert (evolution @ triplet).close_to(cmath.exp(-1j * t) * triplet)

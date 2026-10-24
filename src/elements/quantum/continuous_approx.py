@@ -2,7 +2,8 @@ from collections.abc import Callable
 
 import numpy as np
 
-from elements.math.utils import frozen
+from elements.math.utils import frozen, nearly_equal
+from elements.quantum.basis import Basis
 from elements.quantum.operator import Operator
 from elements.quantum.state import StateSpace, StateSpaceVector
 from elements.util.cache import cached
@@ -51,136 +52,113 @@ class CyclicalGrid1DStateSpace(StateSpace):
     def dx(self) -> float:
         return self.length / self.num_points
 
+    # The ket whose component along each position eigenvector |x>, a basis ket of the grid,
+    # is f(x).
+    def sample(self, f: Callable[[np.ndarray], np.ndarray]) -> StateSpaceVector:
+        return self.basis.ket(f(self.ticks))
+
     def __repr__(self) -> str:
-        return f"CyclicalGridState(min_x={self.min_x}, max_x={self.max_x}, dx={self.dx})"
+        return f"CyclicalGrid1DStateSpace(min_x={self.min_x}, max_x={self.max_x}, dx={self.dx})"
 
 
 class Operators1D:
-    # Momenta of the plane waves that fit on the circle (hbar = 1), in FFT order:
-    # zero, then positive, then negative.
     @staticmethod
     @cached
-    def _momentum_eigenvalues(state: CyclicalGrid1DStateSpace) -> np.ndarray:
-        return frozen(2 * np.pi * np.fft.fftfreq(state.num_points, d=state.dx))
+    def position(grid: CyclicalGrid1DStateSpace) -> Operator:
+        return Operator.diagonal(grid.basis, grid.ticks)
+
+    # Diagonal in the plane waves that fit on the circle, whose momenta (hbar = 1) are the
+    # multiples of 2 pi / length up to the grid's resolution.
+    @staticmethod
+    @cached
+    def momentum(grid: CyclicalGrid1DStateSpace) -> Operator:
+        quanta = np.arange(grid.num_points) - grid.num_points // 2
+        momenta = 2 * np.pi / grid.length * quanta
+        plane_waves = Basis([WaveFunctions1D.plane_wave(grid, p) for p in momenta])
+        return Operator.diagonal(plane_waves, momenta)
 
     @staticmethod
     @cached
-    def _momentum_eigenvectors(state: CyclicalGrid1DStateSpace) -> np.ndarray:
-        # Column j is the plane wave exp(i p_j x) / sqrt(n) sampled at the ticks,
-        # with p_j = _momentum_eigenvalues(state)[j].
-        momenta = Operators1D._momentum_eigenvalues(state)
-        return frozen(np.exp(1j * np.outer(state.ticks, momenta)) / np.sqrt(state.num_points))
-
-    @staticmethod
-    def _momentum_basis_with_eigenvalues(
-        state: CyclicalGrid1DStateSpace, eigenvalues: np.ndarray
-    ) -> Operator:
-        eigenvectors = Operators1D._momentum_eigenvectors(state)
-        return Operator(
-            state,
-            (eigenvectors * eigenvalues) @ eigenvectors.conj().T,
-            eigenvalues=eigenvalues,
-            eigenvectors=eigenvectors,
-            is_normal=True,
-        )
+    def momentum_squared(grid: CyclicalGrid1DStateSpace) -> Operator:
+        return Operators1D.momentum(grid).map_eigenvalues(np.square)
 
     @staticmethod
     @cached
-    def position(state: CyclicalGrid1DStateSpace) -> Operator:
-        return Operator.diagonal(state, state.ticks)
+    def kinetic_energy(grid: CyclicalGrid1DStateSpace, mass: float) -> Operator:
+        return Operators1D.momentum(grid).map_eigenvalues(lambda p: p**2 / (2 * mass))
 
+    # V(X). Not cached: every call brings its own potential, often a fresh closure.
     @staticmethod
-    @cached
     def potential_energy(
-        state: CyclicalGrid1DStateSpace, v: Callable[[np.ndarray], np.ndarray]
+        grid: CyclicalGrid1DStateSpace, v: Callable[[np.ndarray], np.ndarray]
     ) -> Operator:
-        values = v(state.ticks)
-        if len(values) != state.num_points:
-            raise ValueError("Values must have the same dimension as the state space")
-        return Operator.diagonal(state, values)
+        return Operators1D.position(grid).map_eigenvalues(v)
 
     @staticmethod
-    @cached
-    def momentum(state: CyclicalGrid1DStateSpace) -> Operator:
-        momenta = Operators1D._momentum_eigenvalues(state)
-        return Operators1D._momentum_basis_with_eigenvalues(state, momenta)
-
-    @staticmethod
-    @cached
-    def momentum_squared(state: CyclicalGrid1DStateSpace) -> Operator:
-        momenta = Operators1D._momentum_eigenvalues(state)
-        return Operators1D._momentum_basis_with_eigenvalues(state, momenta**2)
-
-    @staticmethod
-    @cached
-    def kinetic_energy(state: CyclicalGrid1DStateSpace, mass: float) -> Operator:
-        momenta = Operators1D._momentum_eigenvalues(state)
-        return Operators1D._momentum_basis_with_eigenvalues(state, momenta**2 / (2 * mass))
-
-    @staticmethod
-    @cached
     def hamiltonian(
-        state: CyclicalGrid1DStateSpace, mass: float, v: Callable[[np.ndarray], np.ndarray]
+        grid: CyclicalGrid1DStateSpace, mass: float, v: Callable[[np.ndarray], np.ndarray]
     ) -> Operator:
-        return Operators1D.kinetic_energy(state, mass) + Operators1D.potential_energy(state, v)
+        return Operators1D.kinetic_energy(grid, mass) + Operators1D.potential_energy(grid, v)
 
     # exp(-i distance P): moves a state round the circle by any distance, not only whole ticks.
     @staticmethod
     @cached
-    def translation(state: CyclicalGrid1DStateSpace, distance: float) -> Operator:
-        momenta = Operators1D._momentum_eigenvalues(state)
-        return Operators1D._momentum_basis_with_eigenvalues(state, np.exp(-1j * momenta * distance))
+    def translation(grid: CyclicalGrid1DStateSpace, distance: float) -> Operator:
+        return (-1j * distance * Operators1D.momentum(grid)).exp()
 
     # exp(i momentum X). Unless momentum is a multiple of 2 pi / length, the phase jumps at the
     # seam, so only boost states that vanish there.
     @staticmethod
     @cached
-    def boost(state: CyclicalGrid1DStateSpace, momentum: float) -> Operator:
-        return Operator.diagonal(state, np.exp(1j * momentum * state.ticks))
+    def boost(grid: CyclicalGrid1DStateSpace, momentum: float) -> Operator:
+        return (1j * momentum * Operators1D.position(grid)).exp()
 
 
 class WaveFunctions1D:
     @staticmethod
+    def plane_wave(grid: CyclicalGrid1DStateSpace, momentum: float) -> StateSpaceVector:
+        return grid.sample(lambda x: np.exp(1j * momentum * x)).normalized
+
+    @staticmethod
     @cached
-    def gaussian_at_rest(state: CyclicalGrid1DStateSpace, sigma: float) -> StateSpaceVector:
+    def gaussian_at_rest(grid: CyclicalGrid1DStateSpace, sigma: float) -> StateSpaceVector:
         if sigma <= 0:
             raise ValueError("Packet width must be positive")
-        values = np.exp(-((state.ticks - state.middle) ** 2) / (4 * sigma**2))
-        return StateSpaceVector(state, values[:, np.newaxis]).normalized
+        return grid.sample(lambda x: np.exp(-((x - grid.middle) ** 2) / (4 * sigma**2))).normalized
 
     @staticmethod
     @cached
     def packet(
-        state: CyclicalGrid1DStateSpace, x0: float, p0: float, sigma: float
+        grid: CyclicalGrid1DStateSpace, x0: float, p0: float, sigma: float
     ) -> StateSpaceVector:
         # Boost opposite the seam, where the packet at rest vanishes, then move it into place.
-        moving = Operators1D.boost(state, p0) @ WaveFunctions1D.gaussian_at_rest(state, sigma)
-        return Operators1D.translation(state, x0 - state.middle) @ moving
+        moving = Operators1D.boost(grid, p0) @ WaveFunctions1D.gaussian_at_rest(grid, sigma)
+        return Operators1D.translation(grid, x0 - grid.middle) @ moving
 
     @staticmethod
     def position_wavefunction(vector: StateSpaceVector) -> tuple[np.ndarray, np.ndarray]:
-        position = Operators1D.position(vector.state_space)
-        return WaveFunctions1D._wavefunction_in_eigenbasis(position, vector)
+        return WaveFunctions1D.wavefunction(Operators1D.position(vector.state_space), vector)
 
     @staticmethod
     def momentum_wavefunction(vector: StateSpaceVector) -> tuple[np.ndarray, np.ndarray]:
-        momentum = Operators1D.momentum(vector.state_space)
-        return WaveFunctions1D._wavefunction_in_eigenbasis(momentum, vector)
+        return WaveFunctions1D.wavefunction(Operators1D.momentum(vector.state_space), vector)
 
-    # Projects onto the eigenvectors in order of eigenvalue. Each projection is the amplitude
-    # for a cell as wide as the spacing between eigenvalues, so dividing by the square root of
-    # that spacing turns amplitudes into an amplitude density.
+    # The eigenvalues of a Hermitian operator that samples a continuum, and the vector's
+    # amplitude density over them.
     @staticmethod
-    def _wavefunction_in_eigenbasis(
-        operator: Operator, vector: StateSpaceVector
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def wavefunction(operator: Operator, vector: StateSpaceVector) -> tuple[np.ndarray, np.ndarray]:
         if not operator.is_hermitian:
             raise ValueError("Wavefunctions are read off the eigenbasis of a Hermitian operator")
-        eigenvalues = operator.eigenvalues.real
-        order = np.argsort(eigenvalues)
-        spacings = np.diff(eigenvalues[order])
-        if spacings[0] <= 0 or not np.allclose(spacings, spacings[0]):
+        eigenvalues = operator.eigenvalues
+        amplitudes = operator.eigenbasis.coordinates(vector)
+        return eigenvalues, WaveFunctions1D.amplitude_density(eigenvalues, amplitudes)
+
+    # Each amplitude along an eigenvector is the amplitude for a cell as wide as the spacing
+    # between eigenvalues, so dividing by the square root of that spacing turns amplitudes into
+    # an amplitude density. Amplitudes run along the first axis, one per eigenvalue.
+    @staticmethod
+    def amplitude_density(eigenvalues: np.ndarray, amplitudes: np.ndarray) -> np.ndarray:
+        spacings = np.diff(eigenvalues)
+        if spacings[0] <= 0 or not nearly_equal(spacings, spacings[0]):
             raise ValueError("Eigenvalues must be distinct and evenly spaced")
-        eigenvectors = operator.eigenvectors
-        amplitudes = np.array([eigenvectors[j].dagger @ vector for j in order])
-        return eigenvalues[order], amplitudes / np.sqrt(spacings[0])
+        return amplitudes / np.sqrt(spacings[0])

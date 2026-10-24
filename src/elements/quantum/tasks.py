@@ -13,11 +13,11 @@ class Task(ABC):
     @abstractmethod
     def potential(self, x: np.ndarray, mass: float) -> np.ndarray: ...
 
-    # Cached here rather than by Operators1D.hamiltonian, which sees a fresh potential closure
-    # on every call. Diagonalizing a new Hamiltonian is the slowest step of a restart.
+    # Operators1D.hamiltonian cannot cache: it gets a fresh potential closure on every call.
+    # Diagonalizing a new Hamiltonian is the slowest step of a restart.
     @cached
-    def hamiltonian(self, state: CyclicalGrid1DStateSpace, mass: float) -> Operator:
-        return Operators1D.hamiltonian(state, mass, lambda x: self.potential(x, mass))
+    def hamiltonian(self, grid: CyclicalGrid1DStateSpace, mass: float) -> Operator:
+        return Operators1D.hamiltonian(grid, mass, lambda x: self.potential(x, mass))
 
     # Position and momentum at the given time of a classical particle that started at (x0, p0).
     # Positions are on the line, not wrapped round the circle.
@@ -33,8 +33,8 @@ class FreeParticle(Task):
 
     # The kinetic energy on its own keeps its exact plane-wave eigenbasis, so nothing has to
     # be diagonalized numerically.
-    def hamiltonian(self, state: CyclicalGrid1DStateSpace, mass: float) -> Operator:
-        return Operators1D.kinetic_energy(state, mass)
+    def hamiltonian(self, grid: CyclicalGrid1DStateSpace, mass: float) -> Operator:
+        return Operators1D.kinetic_energy(grid, mass)
 
     def classical(self, x0: float, p0: float, mass: float, time: float) -> tuple[float, float]:
         return x0 + p0 * time / mass, p0

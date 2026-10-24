@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
-from matplotlib.widgets import Button, RadioButtons, Slider
+from matplotlib.widgets import Button, Slider
 
 from elements.quantum.continuous_approx import (
     CyclicalGrid1DStateSpace,
@@ -15,6 +15,7 @@ from elements.quantum.continuous_approx import (
 from elements.quantum.evolution import EigenbasisEvolution
 from elements.quantum.state import StateSpaceVector
 from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
+from tools.plotting import POTENTIAL_COLOR, radio_buttons, show_wavefunction, wavefunction_lines
 
 FRAME_SECONDS = 0.03
 # A stall (window dragged, laptop asleep) should not make the packet jump ahead.
@@ -22,28 +23,28 @@ LONGEST_STEP_SECONDS = 0.1
 MOMENTUM_RANGE = 10.0
 HISTORY_SPAN = 10.0
 DENSITY_COLOR = "tab:blue"
-POTENTIAL_COLOR = "tab:green"
 QUANTUM_STYLE = {"color": "tab:red", "linewidth": 1.5}
 CLASSICAL_STYLE = {"color": "black", "linestyle": "--", "linewidth": 1.2}
-ENVELOPE_STYLE = {"color": "gray", "linewidth": 0.8}
 # Cyclic, dark at phase 0 and light half a turn away.
 PHASE_COLORMAP = plt.get_cmap("twilight")
 
 
 class WavePacketExplorer:
-    def __init__(self, tasks: Sequence[Task], state: CyclicalGrid1DStateSpace) -> None:
+    def __init__(self, tasks: Sequence[Task], grid: CyclicalGrid1DStateSpace) -> None:
         if not tasks:
             raise ValueError("Explorer needs at least one task")
         self.tasks = {task.name: task for task in tasks}
         self.task = tasks[0]
-        self.state = state
-        self.momentum = Operators1D.momentum(state)
+        self.grid = grid
+        self.momentum = Operators1D.momentum(grid)
+        # exp(2 pi i X / L), the boost by one quantum of momentum: the one function of X that
+        # turns smoothly all the way round the ring.
+        self._ring_boost = Operators1D.boost(grid, 2 * np.pi / grid.length)
         self.playing = True
         self.time = 0.0
         self.history: dict[str, list[float]] = {}
         self.coherence = 1.0
         self.animation: FuncAnimation | None = None
-        self._ring_phases = np.exp(2j * np.pi * (state.ticks - state.min_x) / state.length)
         self._restart_pending = True
         self._last_frame: float | None = None
         self._build_figure()
@@ -93,8 +94,8 @@ class WavePacketExplorer:
     def _restart(self) -> None:
         values = {name: slider.val for name, slider in self.sliders.items()}
         self._initial = (values["x0"], values["p0"], values["mass"])
-        packet = WaveFunctions1D.packet(self.state, values["x0"], values["p0"], values["sigma"])
-        hamiltonian = self.task.hamiltonian(self.state, values["mass"])
+        packet = WaveFunctions1D.packet(self.grid, values["x0"], values["p0"], values["sigma"])
+        hamiltonian = self.task.hamiltonian(self.grid, values["mass"])
         self.evolution = EigenbasisEvolution(hamiltonian, packet)
         self.time = 0.0
         self.history = {key: [] for key in ("time", "x", "p", "classical_x", "classical_p")}
@@ -111,7 +112,7 @@ class WavePacketExplorer:
         x, psi = WaveFunctions1D.position_wavefunction(state)
         p, phi = WaveFunctions1D.momentum_wavefunction(state)
         density = np.abs(psi) ** 2
-        mean_x = self._ring_mean(density)
+        mean_x = self._ring_mean(state)
         mean_p = self.momentum.expectation(state)
         x0, p0, mass = self._initial
         classical_x, classical_p = self.task.classical(x0, p0, mass, self.time)
@@ -127,8 +128,8 @@ class WavePacketExplorer:
 
         self.density_line.set_data(x, density)
         self.density_fill.set_data(x, 0, density)
-        self._show_wavefunction(self.position_lines, x, psi)
-        self._show_wavefunction(self.momentum_lines, p, phi)
+        show_wavefunction(self.position_lines, x, psi)
+        show_wavefunction(self.momentum_lines, p, phi)
         for line in self.mean_x_lines:
             line.set_xdata([mean_x, mean_x])
         for line in self.classical_x_lines:
@@ -152,9 +153,8 @@ class WavePacketExplorer:
     # the energies is what would make the motion exactly periodic; only the departures from it
     # are kept for colouring the phases.
     def _build_energy_bars(self, energy: float, classical_energy: float) -> None:
-        order = np.argsort(self.evolution.energies, kind="stable")
-        energies = self.evolution.energies[order]
-        weights = np.abs(self.evolution.energy_components[order]) ** 2
+        energies = self.evolution.energies
+        weights = np.abs(self.evolution.energy_components) ** 2
         held = np.flatnonzero(weights > 1e-3 * weights.max())
         levels = np.arange(max(held[0] - 2, 0), min(held[-1] + 3, len(weights)))
         self._level_weights = weights[levels]
@@ -192,19 +192,11 @@ class WavePacketExplorer:
         self.coherence = float(np.abs(np.sum(weights * np.exp(1j * drift))) / weights.sum())
         self.coherence_text.set_text(f"coherence {self.coherence:.2f}")
 
-    @staticmethod
-    def _show_wavefunction(lines: Sequence, coordinates: np.ndarray, values: np.ndarray) -> None:
-        real, imaginary, envelope, negative_envelope = lines
-        real.set_data(coordinates, values.real)
-        imaginary.set_data(coordinates, values.imag)
-        envelope.set_data(coordinates, np.abs(values))
-        negative_envelope.set_data(coordinates, -np.abs(values))
-
     def _show_history(self) -> None:
         times = np.array(self.history["time"])
         # The ring position jumps by a circumference at the seam. Unwrapping follows the packet
         # onto the line, where the classical particle lives.
-        quantum_x = np.unwrap(np.array(self.history["x"]), period=self.state.length)
+        quantum_x = np.unwrap(np.array(self.history["x"]), period=self.grid.length)
         self.x_history_lines[0].set_data(times, quantum_x)
         self.x_history_lines[1].set_data(times, self.history["classical_x"])
         self.p_history_lines[0].set_data(times, self.history["p"])
@@ -214,14 +206,14 @@ class WavePacketExplorer:
         self._fit(self.p_history_axes, self.history["p"], self.history["classical_p"])
 
     # X jumps at the seam, so <X> stops meaning anything once the packet reaches it. The
-    # circular mean arg <exp(2 pi i X / L)> equals <X> for a symmetric packet away from the
-    # seam and keeps tracking the packet across it.
-    def _ring_mean(self, density: np.ndarray) -> float:
-        turn = np.angle(np.sum(density * self._ring_phases)) / (2 * np.pi)
-        return self.state.min_x + self.state.length * (turn % 1.0)
+    # circular mean, the angle of <exp(2 pi i X / L)> scaled to the circumference, equals <X>
+    # for a symmetric packet away from the seam and keeps tracking the packet across it.
+    def _ring_mean(self, state: StateSpaceVector) -> float:
+        turn = np.angle(state.dagger @ self._ring_boost @ state) / (2 * np.pi)
+        return self._wrap(self.grid.length * turn)
 
     def _wrap(self, x: float) -> float:
-        return self.state.min_x + (x - self.state.min_x) % self.state.length
+        return self.grid.min_x + (x - self.grid.min_x) % self.grid.length
 
     @staticmethod
     def _fit(axes: Axes, *series: Sequence[float], minimum_span: float = 1.0) -> None:
@@ -247,7 +239,7 @@ class WavePacketExplorer:
             axes.set_ylim(-top if symmetric else 0, top)
 
     def _show_potential(self, mass: float, energy: float) -> None:
-        values = self.task.potential(self.state.ticks, mass)
+        values = self.task.potential(self.grid.ticks, mass)
         visible = bool(np.any(values != 0))
         self.potential_axes.set_visible(visible)
         if visible:
@@ -263,7 +255,7 @@ class WavePacketExplorer:
     # A classical particle stays bound when it cannot climb over the highest point of the
     # ring. Past that the line-based classical solution no longer describes it.
     def _show_escape_momentum(self, x0: float, mass: float) -> None:
-        values = self.task.potential(self.state.ticks, mass)
+        values = self.task.potential(self.grid.ticks, mass)
         climb = values.max() - self.task.potential(np.array([x0]), mass)[0]
         escape = float(np.sqrt(2 * mass * climb)) if climb > 0 else 0.0
         slider = self.sliders["p0"]
@@ -306,14 +298,14 @@ class WavePacketExplorer:
         self.coherence_text = axes.text(0.99, 0.85, "", transform=axes.transAxes, ha="right")
 
     def _build_position_plots(self) -> None:
-        ticks = self.state.ticks
+        ticks = self.grid.ticks
         axes = self.density_axes
         axes.set_title(r"Probability density $|\psi(x)|^2$")
         (self.density_line,) = axes.plot(ticks, np.zeros_like(ticks), color=DENSITY_COLOR)
         self.density_fill = axes.fill_between(
             ticks, np.zeros_like(ticks), color=DENSITY_COLOR, alpha=0.25
         )
-        axes.set_xlim(self.state.min_x, self.state.max_x)
+        axes.set_xlim(self.grid.min_x, self.grid.max_x)
         self.potential_axes = axes.twinx()
         self.potential_axes.set_ylabel("$V(x)$", color=POTENTIAL_COLOR)
         (self.potential_line,) = self.potential_axes.plot(
@@ -327,7 +319,7 @@ class WavePacketExplorer:
         axes = self.position_axes
         axes.set_title(r"Wavefunction $\psi(x)$")
         axes.set_xlabel("$x$")
-        self.position_lines = self._wavefunction_lines(axes, r"\psi")
+        self.position_lines = wavefunction_lines(axes, r"\psi")
 
         self.mean_x_lines = []
         self.classical_x_lines = []
@@ -344,19 +336,11 @@ class WavePacketExplorer:
         axes.set_title(r"Momentum wavefunction $\tilde\psi(p)$")
         axes.set_xlabel("$p$")
         axes.set_xlim(-MOMENTUM_RANGE, MOMENTUM_RANGE)
-        self.momentum_lines = self._wavefunction_lines(axes, r"\tilde\psi")
+        self.momentum_lines = wavefunction_lines(axes, r"\tilde\psi")
         self.mean_p_line = axes.axvline(0, label=r"$\langle p \rangle$", **QUANTUM_STYLE)
         self.classical_p_line = axes.axvline(0, label="classical $p$", **CLASSICAL_STYLE)
         # Re and Im share their colours with the position panel, so only the markers need a key.
         axes.legend(handles=[self.mean_p_line, self.classical_p_line], loc="upper left", fontsize=8)
-
-    @staticmethod
-    def _wavefunction_lines(axes: Axes, symbol: str) -> list:
-        (real,) = axes.plot([], [], color="tab:blue", label=f"Re ${symbol}$")
-        (imaginary,) = axes.plot([], [], color="tab:orange", label=f"Im ${symbol}$")
-        (envelope,) = axes.plot([], [], label=f"$\\pm|{symbol}|$", **ENVELOPE_STYLE)
-        (negative_envelope,) = axes.plot([], [], **ENVELOPE_STYLE)
-        return [real, imaginary, envelope, negative_envelope]
 
     def _build_history_plots(self) -> None:
         self.x_history_lines = []
@@ -373,13 +357,13 @@ class WavePacketExplorer:
         self.p_history_axes.set_xlabel("$t$")
 
     def _build_controls(self) -> None:
-        reach = 0.35 * self.state.length
+        reach = 0.35 * self.grid.length
         specs = {
             "x0": (
                 r"$x_0$",
-                self.state.middle - reach,
-                self.state.middle + reach,
-                self.state.middle - reach / 2,
+                self.grid.middle - reach,
+                self.grid.middle + reach,
+                self.grid.middle - reach / 2,
             ),
             "p0": (r"$p_0$", -5.0, 5.0, 2.0),
             "sigma": (r"$\sigma$", 0.3, 3.0, 1.0),
@@ -398,10 +382,14 @@ class WavePacketExplorer:
         ]
         self.bound_text = self.figure.text(0.08, 0.008, "", color=POTENTIAL_COLOR, fontsize=9)
 
-        task_axes = self.figure.add_axes((0.62, 0.04, 0.16, 0.16))
-        task_axes.set_title("Task", fontsize=10)
-        self.task_buttons = RadioButtons(task_axes, list(self.tasks))
-        self.task_buttons.on_clicked(self.select_task)
+        self.task_buttons = radio_buttons(
+            self.figure,
+            (0.62, 0.04, 0.16, 0.16),
+            "Task",
+            list(self.tasks),
+            self.task.name,
+            self.select_task,
+        )
         self.play_button = Button(self.figure.add_axes((0.83, 0.15, 0.1, 0.06)), "Pause")
         self.play_button.on_clicked(lambda _: self.toggle_play())
         self.reset_button = Button(self.figure.add_axes((0.83, 0.06, 0.1, 0.06)), "Reset")

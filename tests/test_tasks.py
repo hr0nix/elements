@@ -9,13 +9,13 @@ from elements.quantum.continuous_approx import (
 from elements.quantum.evolution import EigenbasisEvolution
 from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
 
-state = CyclicalGrid1DStateSpace(-30.0, 30.0, 601)
-x, p = Operators1D.position(state), Operators1D.momentum(state)
+grid = CyclicalGrid1DStateSpace(-30.0, 30.0, 601)
+x, p = Operators1D.position(grid), Operators1D.momentum(grid)
 
 
 def evolution(task: Task, x0: float, p0: float, sigma: float, mass: float) -> EigenbasisEvolution:
-    packet = WaveFunctions1D.packet(state, x0, p0, sigma)
-    return EigenbasisEvolution(task.hamiltonian(state, mass), packet)
+    packet = WaveFunctions1D.packet(grid, x0, p0, sigma)
+    return EigenbasisEvolution(task.hamiltonian(grid, mass), packet)
 
 
 def spread(packet) -> float:
@@ -53,7 +53,7 @@ def test_free_packet_momentum_distribution_does_not_change():
 def test_oscillator_levels_are_spaced_by_omega():
     task, mass = HarmonicOscillator(), 2.0
     omega = np.sqrt(task.spring_constant / mass)
-    energies = np.sort(task.hamiltonian(state, mass).eigenvalues.real)[:5]
+    energies = task.hamiltonian(grid, mass).eigenvalues[:5]
     assert energies == pytest.approx(omega * (np.arange(5) + 0.5))
 
 
@@ -82,7 +82,7 @@ def test_gravity_levels_are_airy_zeros():
     task, mass = Gravity(g=0.5), 1.0
     scale = (mass * task.g**2 / 2) ** (1 / 3)
     first_zero_of_airy_derivative, first_zero_of_airy = 1.018792971647471, 2.338107410459767
-    energies = np.sort(task.hamiltonian(state, mass).eigenvalues.real)[:2]
+    energies = task.hamiltonian(grid, mass).eigenvalues[:2]
     expected = scale * np.array([first_zero_of_airy_derivative, first_zero_of_airy])
     assert energies == pytest.approx(expected, rel=1e-3)
 

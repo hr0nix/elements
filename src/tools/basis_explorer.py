@@ -7,10 +7,17 @@ from matplotlib.axes import Axes
 from matplotlib.backend_bases import KeyEvent, MouseButton, MouseEvent
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import AutoLocator, ScalarFormatter
-from matplotlib.widgets import RadioButtons, Slider
+from matplotlib.widgets import Slider
 
-from elements.quantum.continuous_approx import CyclicalGrid1DStateSpace, Operators1D
+from elements.quantum.basis import Basis
+from elements.quantum.continuous_approx import (
+    CyclicalGrid1DStateSpace,
+    Operators1D,
+    WaveFunctions1D,
+)
+from elements.quantum.operator import Operator
 from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
+from tools.plotting import POTENTIAL_COLOR, radio_buttons, show_wavefunction, wavefunction_lines
 
 LIST_ROWS = 40
 SCROLL_ROWS = 3
@@ -20,16 +27,14 @@ KEY_STEPS = {"down": 1, "up": -1, "pagedown": LIST_ROWS, "pageup": -LIST_ROWS}
 # Diagonalizing a Hamiltonian takes about a tenth of a second, too long to redo for every step
 # of a slider drag, so a drag rebuilds once it pauses.
 REBUILD_DELAY_MS = 150
-POTENTIAL_COLOR = "tab:green"
 SELECTION_COLOR = "tab:cyan"
-ENVELOPE_STYLE = {"color": "gray", "linewidth": 0.8}
 CURVE_STYLE = {"linestyle": "-", "marker": "None"}
 # Energy levels are separate points rather than samples of a curve. Joined up, neighbouring
 # levels that look nothing alike, such as an even and an odd state, fill the plot in solid.
 LEVEL_STYLE = {"linestyle": "None", "marker": ".", "markersize": 3}
 
 
-class Basis(NamedTuple):
+class Observable(NamedTuple):
     name: str
     operator: str
     # Of the eigenvalue, and of a generic eigenvector inside a bra or ket.
@@ -39,12 +44,12 @@ class Basis(NamedTuple):
     continuous: bool
 
 
-BASES = {
-    basis.name: basis
-    for basis in (
-        Basis("Position", "X", "x", "x", continuous=True),
-        Basis("Momentum", "P", "p", "p", continuous=True),
-        Basis("Energy", "H", "E", "E_n", continuous=False),
+OBSERVABLES = {
+    observable.name: observable
+    for observable in (
+        Observable("Position", "X", "x", "x", continuous=True),
+        Observable("Momentum", "P", "p", "p", continuous=True),
+        Observable("Energy", "H", "E", "E_n", continuous=False),
     )
 }
 
@@ -185,16 +190,16 @@ class EigenvectorList:
 
 
 class BasisExplorer:
-    def __init__(self, tasks: Sequence[Task], state: CyclicalGrid1DStateSpace) -> None:
+    def __init__(self, tasks: Sequence[Task], grid: CyclicalGrid1DStateSpace) -> None:
         if not tasks:
             raise ValueError("Explorer needs at least one task")
         self.tasks = {task.name: task for task in tasks}
         self.task = tasks[0]
-        self.state = state
-        self.target = BASES["Momentum"]
-        self.view = BASES["Position"]
+        self.grid = grid
+        self.target = OBSERVABLES["Momentum"]
+        self.view = OBSERVABLES["Position"]
         self.selected = 0
-        self._listed: Basis | None = None
+        self._listed: Observable | None = None
         self._build_figure()
         self.rebuild()
 
@@ -211,22 +216,22 @@ class BasisExplorer:
         self.rebuild()
 
     def select_target(self, name: str) -> None:
-        self.target = BASES[name]
+        self.target = OBSERVABLES[name]
         self.rebuild()
 
     def select_view(self, name: str) -> None:
-        self.view = BASES[name]
+        self.view = OBSERVABLES[name]
         self.rebuild()
 
     def rebuild(self) -> None:
-        self.target_values, target_vectors = self._sorted_eigenbasis(self.target)
-        self.view_values, view_vectors = self._sorted_eigenbasis(self.view)
+        target, view = self._operator(self.target), self._operator(self.view)
+        self.target_values, self.view_values = target.eigenvalues, view.eigenvalues
+        view_basis = self._with_textbook_signs(view.eigenbasis)
+        target_basis = self._with_textbook_signs(target.eigenbasis)
         # Row i, column j is <view_i|target_j>: column j is target eigenvector j in the view basis.
-        self.amplitudes = view_vectors.conj().T @ target_vectors
+        self.amplitudes = view_basis.overlaps(target_basis)
         if self.view.continuous:
-            # Each overlap is the amplitude for a cell one eigenvalue spacing wide. Dividing by
-            # the square root of the spacing turns it into an amplitude density.
-            self.amplitudes /= np.sqrt(self.view_values[1] - self.view_values[0])
+            self.amplitudes = WaveFunctions1D.amplitude_density(self.view_values, self.amplitudes)
         # A new kind of eigenvector starts from the one nearest zero: x = 0, p = 0 or the ground
         # state. Otherwise the selection stays, so a level can be compared across tasks.
         if self.target != self._listed:
@@ -251,11 +256,7 @@ class BasisExplorer:
         self.selected = int(np.clip(index, 0, len(self.target_values) - 1))
         self.eigenvector_list.show(self.selected)
         amplitudes = self.amplitudes[:, self.selected]
-        real, imaginary, envelope, negative_envelope = self.vector_lines
-        real.set_data(self._view_coordinates, amplitudes.real)
-        imaginary.set_data(self._view_coordinates, amplitudes.imag)
-        envelope.set_data(self._view_coordinates, np.abs(amplitudes))
-        negative_envelope.set_data(self._view_coordinates, -np.abs(amplitudes))
+        show_wavefunction(self.vector_lines, self._view_coordinates, amplitudes)
         peak = np.abs(amplitudes).max()
         self.vector_axes.set_ylim(-1.15 * peak, 1.15 * peak)
         if self.target.continuous:
@@ -280,26 +281,30 @@ class BasisExplorer:
             amplitude += rf" / \sqrt{{d{self.view.symbol}}}"
         return f"${amplitude}$"
 
-    def _sorted_eigenbasis(self, basis: Basis) -> tuple[np.ndarray, np.ndarray]:
-        match basis.name:
+    def _operator(self, observable: Observable) -> Operator:
+        match observable.name:
             case "Position":
-                operator = Operators1D.position(self.state)
+                return Operators1D.position(self.grid)
             case "Momentum":
-                operator = Operators1D.momentum(self.state)
+                return Operators1D.momentum(self.grid)
             case _:
-                operator = self.task.hamiltonian(self.state, self.mass)
-        eigenvalues = operator.eigenvalues.real
-        order = np.argsort(eigenvalues, kind="stable")
-        vectors = np.hstack([vector.components for vector in operator.eigenvectors])[:, order]
-        if not vectors.imag.any():
-            # A real eigenvector is fixed only up to its sign. Making the lobe furthest to the
-            # right positive, as for the textbook oscillator states, stops the sign jumping
-            # between levels at random.
-            magnitudes = np.abs(vectors.real)
-            significant = magnitudes > 1e-3 * magnitudes.max(axis=0)
-            rightmost = len(vectors) - 1 - np.argmax(significant[::-1], axis=0)
-            vectors = vectors * np.sign(vectors.real[rightmost, np.arange(len(vectors))])
-        return eigenvalues[order], vectors
+                return self.task.hamiltonian(self.grid, self.mass)
+
+    # A real eigenvector is fixed only up to its sign. Making the lobe furthest to the right
+    # positive, as for the textbook oscillator states, stops the sign jumping between levels
+    # at random.
+    def _with_textbook_signs(self, basis: Basis) -> Basis:
+        # Column j is basis ket j in the position basis.
+        vectors = Operators1D.position(self.grid).eigenbasis.overlaps(basis)
+        if vectors.imag.any():
+            return basis
+        magnitudes = np.abs(vectors.real)
+        significant = magnitudes > 1e-3 * magnitudes.max(axis=0)
+        rightmost = len(vectors) - 1 - np.argmax(significant[::-1], axis=0)
+        signs = np.sign(vectors.real[rightmost, np.arange(len(vectors))])
+        if np.all(signs > 0):
+            return basis
+        return Basis([sign * vector for sign, vector in zip(signs, basis, strict=True)])
 
     # The overlap image shares its horizontal axis with the plot above, so both follow the
     # view basis: its eigenvalues when they sample a continuum, its level numbers otherwise.
@@ -353,12 +358,12 @@ class BasisExplorer:
     # it is below. As in textbook pictures, the level is drawn at zero amplitude, so the
     # classical turning points are where the potential crosses the zero line.
     def _show_potential(self) -> None:
-        values = self.task.potential(self.state.ticks, self.mass)
+        values = self.task.potential(self.grid.ticks, self.mass)
         visible = self.view.name == "Position" and bool(np.any(values != 0))
         self.potential_axes.set_visible(visible)
         if not visible:
             return
-        self.potential_line.set_data(self.state.ticks, values)
+        self.potential_line.set_data(self.grid.ticks, values)
         low, high = values.min(), values.max()
         showing_level = self.target.name == "Energy"
         self.level_line.set_visible(showing_level)
@@ -408,26 +413,19 @@ class BasisExplorer:
         self.radio_buttons = {}
         for top, title, labels, initial, callback in (
             (0.88, "Task", list(self.tasks), self.task.name, self.select_task),
-            (0.66, "Eigenvectors of", list(BASES), self.target.name, self.select_target),
-            (0.44, "Shown in", list(BASES), self.view.name, self.select_view),
+            (0.66, "Eigenvectors of", list(OBSERVABLES), self.target.name, self.select_target),
+            (0.44, "Shown in", list(OBSERVABLES), self.view.name, self.select_view),
         ):
-            axes = self.figure.add_axes((0.02, top - 0.14, 0.13, 0.14))
-            axes.set_title(title, fontsize=10)
-            buttons = RadioButtons(axes, labels, active=labels.index(initial))
-            buttons.on_clicked(callback)
-            self.radio_buttons[title] = buttons
+            self.radio_buttons[title] = radio_buttons(
+                self.figure, (0.02, top - 0.14, 0.13, 0.14), title, labels, initial, callback
+            )
         slider_axes = self.figure.add_axes((0.04, 0.24, 0.08, 0.025))
         self.mass_slider = Slider(slider_axes, "$m$", 0.2, 5.0, valinit=1.0)
         self.mass_slider.on_changed(lambda _: self._rebuild_soon())
 
     def _build_vector_plot(self) -> None:
         axes = self.vector_axes = self.figure.add_axes((0.39, 0.56, 0.54, 0.34))
-        (real,) = axes.plot([], [], color="tab:blue", label="Re")
-        (imaginary,) = axes.plot([], [], color="tab:orange", label="Im")
-        # Underneath, so that Re and Im stay visible where hundreds of levels are drawn.
-        (envelope,) = axes.plot([], [], label=r"$\pm|\cdot|$", zorder=1, **ENVELOPE_STYLE)
-        (negative_envelope,) = axes.plot([], [], zorder=1, **ENVELOPE_STYLE)
-        self.vector_lines = [real, imaginary, envelope, negative_envelope]
+        self.vector_lines = wavefunction_lines(axes)
         axes.axhline(0, color="black", linewidth=0.5)
         self.potential_axes = axes.twinx()
         self.potential_axes.set_ylabel("$V(x)$", color=POTENTIAL_COLOR)

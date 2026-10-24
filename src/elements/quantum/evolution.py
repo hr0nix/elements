@@ -14,11 +14,11 @@ class EigenbasisEvolution:
         if not hamiltonian.is_hermitian:
             raise ValueError("Evolution needs a Hermitian Hamiltonian")
         self.state_space = hamiltonian.state_space
-        self._energies = frozen(hamiltonian.eigenvalues.real)
-        self._eigenbasis = np.hstack([vector.components for vector in hamiltonian.eigenvectors])
-        self._components = frozen((self._eigenbasis.conj().T @ initial.components).ravel())
+        self._eigenbasis = hamiltonian.eigenbasis
+        self._energies = hamiltonian.eigenvalues
+        self._components = frozen(self._eigenbasis.coordinates(initial))
 
-    # Energies of the eigenstates, in no particular order.
+    # Energies of the eigenstates, in increasing order.
     @property
     def energies(self) -> np.ndarray:
         return self._energies
@@ -28,6 +28,6 @@ class EigenbasisEvolution:
     def energy_components(self) -> np.ndarray:
         return self._components
 
+    # Each energy eigenstate |E> only turns its phase, to exp(-i E t) |E>.
     def state_at(self, time: float) -> StateSpaceVector:
-        components = np.exp(-1j * self._energies * time) * self._components
-        return StateSpaceVector(self.state_space, self._eigenbasis @ components[:, np.newaxis])
+        return self._eigenbasis.ket(np.exp(-1j * self._energies * time) * self._components)
