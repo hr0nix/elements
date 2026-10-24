@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "matplotlib>=3.11.2",
     "numpy>=2.5.4",
 ]
 
@@ -30,4 +31,5 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 addopts = ["-ra", "--strict-markers"]
