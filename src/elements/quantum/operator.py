@@ -4,7 +4,6 @@ from numbers import Number
 
 import numpy as np
 
-from elements.math.typechecks import is_complex
 from elements.math.utils import DEFAULT_TOLERANCE, frozen
 from elements.quantum.state import StateSpace, StateSpaceVector
 
@@ -22,27 +21,37 @@ class Operator:
         is_normal: bool | None = None,
     ):
         dimension = state_space.dimension
-        if not is_complex(matrix) or matrix.shape != (dimension, dimension):
-            raise ValueError("Matrix must be complex and square, matching the state space")
+        matrix = np.asarray(matrix, dtype=complex)
+        if matrix.shape != (dimension, dimension):
+            raise ValueError("Matrix must be square, matching the state space")
         if eigenvectors is not None and eigenvalues is None:
             raise ValueError("Eigenvectors must come with the eigenvalues they belong to")
 
         self.state_space = state_space
         self.matrix = frozen(matrix)
-        self._eigenvalues = None if eigenvalues is None else frozen(eigenvalues)
-        self._eigenvectors = None if eigenvectors is None else frozen(eigenvectors)
+        self._eigenvalues = (
+            None if eigenvalues is None else frozen(np.asarray(eigenvalues, dtype=complex))
+        )
+        self._eigenvectors = (
+            None if eigenvectors is None else frozen(np.asarray(eigenvectors, dtype=complex))
+        )
         self._is_normal = is_normal
 
     @staticmethod
-    def identity(state_space: StateSpace) -> Operator:
-        dimension = state_space.dimension
+    def diagonal(state_space: StateSpace, values: np.ndarray) -> Operator:
+        if len(values) != state_space.dimension:
+            raise ValueError("Values must have the same dimension as the state space")
         return Operator(
             state_space,
-            np.eye(dimension, dtype=complex),
-            eigenvalues=np.ones(dimension, dtype=complex),
-            eigenvectors=np.eye(dimension, dtype=complex),
+            np.diag(values),
+            eigenvalues=values,
+            eigenvectors=np.eye(state_space.dimension, dtype=complex),
             is_normal=True,
         )
+
+    @staticmethod
+    def identity(state_space: StateSpace) -> Operator:
+        return Operator.diagonal(state_space, np.ones(state_space.dimension, dtype=complex))
 
     @staticmethod
     def spectral(eigenpairs: Sequence[tuple[complex, StateSpaceVector]]) -> Operator:

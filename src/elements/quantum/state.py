@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from elements.math.typechecks import is_bra_vector, is_complex_vector, is_ket_vector
+from elements.math.typechecks import is_bra_vector, is_ket_vector, is_vector
 from elements.math.utils import DEFAULT_TOLERANCE, frozen
 from elements.util.formatting import split_sign
 
@@ -70,8 +70,9 @@ class StateSpace:
 
 class StateSpaceVector:
     def __init__(self, state_space: StateSpace, components: np.ndarray):
-        if not is_complex_vector(components):
-            raise ValueError("Components must be a complex bra or ket vector")
+        components = np.asarray(components, dtype=complex)
+        if not is_vector(components):
+            raise ValueError("Components must be a bra or ket vector")
         if components.size != state_space.dimension:
             raise ValueError("Number of coefficients must match number of labels")
 
