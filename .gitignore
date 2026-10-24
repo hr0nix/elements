@@ -13,3 +13,9 @@ wheels/
 .pytest_cache/
 .ruff_cache/
 .coverage
+
+# Editor settings
+.vscode/
+
+# Scratch scripts
+src/tools/test_area.py
