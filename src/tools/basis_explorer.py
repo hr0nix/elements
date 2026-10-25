@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import NamedTuple
 
 import matplotlib.pyplot as plt
@@ -13,10 +14,13 @@ from elements.quantum.basis import Basis
 from elements.quantum.continuous_approx import (
     ContinuousBasis,
     CyclicalGrid1DStateSpace,
+    FreeParticle,
+    Gravity,
+    HarmonicOscillator,
     Operators1D,
+    Task1D,
 )
 from elements.quantum.operator import Operator
-from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
 from tools.plotting import POTENTIAL_COLOR, radio_buttons, show_wavefunction, wavefunction_lines
 
 LIST_ROWS = 40
@@ -190,7 +194,7 @@ class EigenvectorList:
 
 
 class BasisExplorer:
-    def __init__(self, tasks: Sequence[Task], grid: CyclicalGrid1DStateSpace) -> None:
+    def __init__(self, tasks: Sequence[Task1D], grid: CyclicalGrid1DStateSpace) -> None:
         if not tasks:
             raise ValueError("Explorer needs at least one task")
         self.tasks = {task.name: task for task in tasks}
@@ -207,10 +211,6 @@ class BasisExplorer:
         self.figure.canvas.manager.full_screen_toggle()
         plt.show()
 
-    @property
-    def mass(self) -> float:
-        return self.mass_slider.val
-
     def select_task(self, name: str) -> None:
         self.task = self.tasks[name]
         self.rebuild()
@@ -224,6 +224,7 @@ class BasisExplorer:
         self.rebuild()
 
     def rebuild(self) -> None:
+        self.task = replace(self.task, mass=self.mass_slider.val)
         target, view = self._operator(self.target), self._operator(self.view)
         self.target_values, self.view_values = target.eigenvalues, view.eigenvalues
         target_basis = self._with_textbook_signs(target.eigenbasis)
@@ -289,7 +290,7 @@ class BasisExplorer:
             case "Momentum":
                 return Operators1D.momentum(self.grid)
             case _:
-                return self.task.hamiltonian(self.grid, self.mass)
+                return self.task.hamiltonian(self.grid)
 
     # A real eigenvector is fixed only up to its sign. Making the lobe furthest to the right
     # positive, as for the textbook oscillator states, stops the sign jumping between levels
@@ -359,7 +360,7 @@ class BasisExplorer:
     # it is below. As in textbook pictures, the level is drawn at zero amplitude, so the
     # classical turning points are where the potential crosses the zero line.
     def _show_potential(self) -> None:
-        values = self.task.potential(self.grid.ticks, self.mass)
+        values = self.task.potential(self.grid.ticks)
         visible = self.view.name == "Position" and bool(np.any(values != 0))
         self.potential_axes.set_visible(visible)
         if not visible:

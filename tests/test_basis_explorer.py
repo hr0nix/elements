@@ -6,8 +6,12 @@ import pytest
 from matplotlib.backend_bases import KeyEvent, MouseButton, MouseEvent
 from numpy.polynomial.hermite import hermval
 
-from elements.quantum.continuous_approx import CyclicalGrid1DStateSpace
-from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator
+from elements.quantum.continuous_approx import (
+    CyclicalGrid1DStateSpace,
+    FreeParticle,
+    Gravity,
+    HarmonicOscillator,
+)
 from tools.basis_explorer import LIST_ROWS, SCROLLBAR_LEFT, BasisExplorer
 
 GRID = CyclicalGrid1DStateSpace(-15.0, 15.0, 201)
@@ -59,7 +63,7 @@ def test_oscillator_levels_are_the_textbook_hermite_functions_in_position_and_mo
     explorer.select_task("Harmonic oscillator")
     explorer.select_target("Energy")
     explorer.select(n)
-    m_omega = np.sqrt(explorer.task.spring_constant * explorer.mass)
+    m_omega = explorer.task.mass * explorer.task.omega
     x, amplitude = shown(explorer)
     assert np.allclose(amplitude, m_omega**0.25 * hermite_function(n, np.sqrt(m_omega) * x))
 
@@ -74,7 +78,7 @@ def test_gravity_levels_are_real_and_positive_past_their_right_turning_point(exp
     explorer.select_target("Energy")
     assert not explorer.amplitudes.imag.any()
     for level in range(10):
-        turning_point = explorer.target_values[level] / (explorer.mass * explorer.task.g)
+        turning_point = explorer.target_values[level] / (explorer.task.mass * explorer.task.g)
         just_past = np.searchsorted(GRID.ticks, turning_point + 0.5)
         assert explorer.amplitudes[just_past, level].real > 0
 
@@ -83,7 +87,7 @@ def test_level_sits_at_zero_amplitude_in_front_of_the_potential(explorer):
     explorer.select_task("Harmonic oscillator")
     explorer.select_target("Energy")
     explorer.select(3)
-    energy = 3.5 * np.sqrt(explorer.task.spring_constant / explorer.mass)
+    energy = 3.5 * explorer.task.omega
     assert explorer.level_line.get_ydata()[0] == pytest.approx(energy)
     assert sum(explorer.potential_axes.get_ylim()) / 2 == pytest.approx(energy)
     assert sum(explorer.vector_axes.get_ylim()) == pytest.approx(0.0)
@@ -99,7 +103,7 @@ def test_energy_basis_is_drawn_as_a_dot_per_level_with_energies_on_the_ticks(exp
     assert explorer.vector_lines[0].get_marker() == "."
     levels = explorer.vector_axes.get_xticks()[:2]
     labels = [float(label.get_text()) for label in explorer.vector_axes.get_xticklabels()[:2]]
-    omega = np.sqrt(explorer.task.spring_constant / explorer.mass)
+    omega = explorer.task.omega
     assert labels == pytest.approx(omega * (levels + 0.5), abs=0.006)
 
     explorer.select_view("Position")

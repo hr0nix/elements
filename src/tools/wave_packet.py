@@ -1,5 +1,6 @@
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,12 +11,15 @@ from matplotlib.widgets import Button, Slider
 from elements.quantum.continuous_approx import (
     ContinuousBasis,
     CyclicalGrid1DStateSpace,
+    FreeParticle,
+    Gravity,
+    HarmonicOscillator,
     Operators1D,
     States1D,
+    Task1D,
 )
 from elements.quantum.evolution import EigenbasisEvolution
 from elements.quantum.state import StateSpaceVector
-from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
 from tools.plotting import POTENTIAL_COLOR, radio_buttons, show_wavefunction, wavefunction_lines
 
 FRAME_SECONDS = 0.03
@@ -31,7 +35,7 @@ PHASE_COLORMAP = plt.get_cmap("twilight")
 
 
 class WavePacketExplorer:
-    def __init__(self, tasks: Sequence[Task], grid: CyclicalGrid1DStateSpace) -> None:
+    def __init__(self, tasks: Sequence[Task1D], grid: CyclicalGrid1DStateSpace) -> None:
         if not tasks:
             raise ValueError("Explorer needs at least one task")
         self.tasks = {task.name: task for task in tasks}
@@ -96,19 +100,18 @@ class WavePacketExplorer:
 
     def _restart(self) -> None:
         values = {name: slider.val for name, slider in self.sliders.items()}
-        self._initial = (values["x0"], values["p0"], values["mass"])
-        packet = States1D.packet(self.grid, values["x0"], values["p0"], values["sigma"])
-        hamiltonian = self.task.hamiltonian(self.grid, values["mass"])
+        self.task = replace(self.task, mass=values["mass"])
+        x0, p0 = self._initial = (values["x0"], values["p0"])
+        packet = States1D.packet(self.grid, x0, p0, values["sigma"])
+        hamiltonian = self.task.hamiltonian(self.grid)
         self.evolution = EigenbasisEvolution(hamiltonian, packet)
         self.time = 0.0
         self.history = {key: [] for key in ("time", "x", "p", "classical_x", "classical_p")}
-        x0, p0, mass = self._initial
         energy = hamiltonian.expectation(packet)
-        classical_energy = p0**2 / (2 * mass) + self.task.potential(np.array([x0]), mass)[0]
-        self._build_energy_bars(energy, classical_energy)
+        self._build_energy_bars(energy, self.task.classical_energy(x0, p0))
         self._rescale(packet)
-        self._show_potential(mass, energy)
-        self._show_escape_momentum(x0, mass)
+        self._show_potential(energy)
+        self._show_escape_momentum(x0)
         self._restart_pending = False
 
     def _show(self, state: StateSpaceVector) -> None:
@@ -117,8 +120,8 @@ class WavePacketExplorer:
         density = np.abs(psi) ** 2
         mean_x = self._ring_mean(state)
         mean_p = self.momentum.expectation(state)
-        x0, p0, mass = self._initial
-        classical_x, classical_p = self.task.classical(x0, p0, mass, self.time)
+        x0, p0 = self._initial
+        classical_x, classical_p = self.task.classical_state(x0, p0, self.time)
         wrapped_x = self._wrap(classical_x)
         for key, value in (
             ("time", self.time),
@@ -241,8 +244,8 @@ class WavePacketExplorer:
             top = 1.15 * peak
             axes.set_ylim(-top if symmetric else 0, top)
 
-    def _show_potential(self, mass: float, energy: float) -> None:
-        values = self.task.potential(self.grid.ticks, mass)
+    def _show_potential(self, energy: float) -> None:
+        values = self.task.potential(self.grid.ticks)
         visible = bool(np.any(values != 0))
         self.potential_axes.set_visible(visible)
         if visible:
@@ -255,12 +258,12 @@ class WavePacketExplorer:
             padding = 0.05 * (high - low) or 1.0
             self.potential_axes.set_ylim(low - padding, high + padding)
 
-    # A classical particle stays bound when it cannot climb over the highest point of the
-    # ring. Past that the line-based classical solution no longer describes it.
-    def _show_escape_momentum(self, x0: float, mass: float) -> None:
-        values = self.task.potential(self.grid.ticks, mass)
-        climb = values.max() - self.task.potential(np.array([x0]), mass)[0]
-        escape = float(np.sqrt(2 * mass * climb)) if climb > 0 else 0.0
+    # A classical particle stays bound while its energy is below the top of the potential on
+    # the ring. Past that the line-based classical solution no longer describes it.
+    def _show_escape_momentum(self, x0: float) -> None:
+        top = self.task.potential(self.grid.ticks).max()
+        climb = top - self.task.classical_energy(x0, 0.0)
+        escape = float(np.sqrt(2 * self.task.mass * climb)) if climb > 0 else 0.0
         slider = self.sliders["p0"]
         for mark, value in zip(self.bound_marks, (-escape, escape), strict=True):
             mark.set_xdata([value, value])

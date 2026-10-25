@@ -1,4 +1,7 @@
+from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 
@@ -164,3 +167,90 @@ class States1D:
         # Boost opposite the seam, where the packet at rest vanishes, then move it into place.
         moving = Operators1D.boost(grid, p0) @ States1D.gaussian_at_rest(grid, sigma)
         return Operators1D.translation(grid, x0 - grid.middle) @ moving
+
+
+# A particle of the given mass in a potential on the line: solved quantum mechanically on a
+# grid, and classically. Tasks are values, so equal tasks share a cached Hamiltonian.
+@dataclass(frozen=True, kw_only=True)
+class Task1D(ABC):
+    name: ClassVar[str]
+    mass: float = 1.0
+
+    @abstractmethod
+    def potential(self, x: np.ndarray) -> np.ndarray: ...
+
+    # Cached here rather than by Operators1D.hamiltonian, which sees the potential only as a
+    # function and so cannot tell when two tasks are equal. Diagonalizing a new Hamiltonian is
+    # the slowest step of a restart.
+    @cached
+    def hamiltonian(self, grid: CyclicalGrid1DStateSpace) -> Operator:
+        return Operators1D.hamiltonian(grid, self.mass, self.potential)
+
+    # H(x, p) = p^2 / 2m + V(x) of the classical particle.
+    def classical_energy(self, x: float, p: float) -> float:
+        return p**2 / (2 * self.mass) + float(self.potential(np.asarray(x)))
+
+    # Position and momentum, together the classical state, at the given time of a particle that
+    # started at (x0, p0). Positions are on the line, not wrapped round the circle.
+    @abstractmethod
+    def classical_state(self, x0: float, p0: float, time: float) -> tuple[float, float]: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class FreeParticle(Task1D):
+    name = "Free particle"
+
+    def potential(self, x: np.ndarray) -> np.ndarray:
+        return np.zeros_like(x)
+
+    def classical_state(self, x0: float, p0: float, time: float) -> tuple[float, float]:
+        return x0 + p0 * time / self.mass, p0
+
+
+# A fixed spring rather than a fixed frequency: heavier particles then oscillate more slowly
+# instead of reaching momenta beyond what the grid resolves. With mass 1 the default spring
+# gives omega = 1/2, whose coherent states, the packets that keep their shape, have width 1.
+@dataclass(frozen=True, kw_only=True)
+class HarmonicOscillator(Task1D):
+    name = "Harmonic oscillator"
+    spring_constant: float = 0.25
+
+    @property
+    def omega(self) -> float:
+        return float(np.sqrt(self.spring_constant / self.mass))
+
+    def potential(self, x: np.ndarray) -> np.ndarray:
+        return 0.5 * self.spring_constant * x**2
+
+    def classical_state(self, x0: float, p0: float, time: float) -> tuple[float, float]:
+        phase = self.omega * time
+        x = x0 * np.cos(phase) + p0 / (self.mass * self.omega) * np.sin(phase)
+        p = p0 * np.cos(phase) - self.mass * self.omega * x0 * np.sin(phase)
+        return float(x), float(p)
+
+
+# A heavy object at x = 0. On a line, Gauss's law makes its pull the same strength at every
+# distance, so the potential grows linearly away from the object.
+@dataclass(frozen=True, kw_only=True)
+class Gravity(Task1D):
+    name = "Gravity"
+    g: float = 0.5
+
+    def potential(self, x: np.ndarray) -> np.ndarray:
+        return self.mass * self.g * np.abs(x)
+
+    # The particle falls through the object and out the other side. Its velocity falls at rate
+    # g while x > 0 and rises at rate g while x < 0, so with tau the time since it last crossed
+    # x = 0 heading right, wrapped into one period [-2u / g, 2u / g), and u its speed at x = 0:
+    # v = u - g |tau| and x = tau (u - g |tau| / 2), a parabolic arc on each side.
+    def classical_state(self, x0: float, p0: float, time: float) -> tuple[float, float]:
+        v0 = p0 / self.mass
+        u = np.sqrt(v0**2 + 2 * self.g * abs(x0))
+        if u == 0:
+            # At rest at the bottom, where it stays.
+            return 0.0, 0.0
+        period = 4 * u / self.g
+        tau0 = np.copysign((u - v0) / self.g, x0)
+        tau = (tau0 + time + period / 2) % period - period / 2
+        x = tau * (u - self.g * abs(tau) / 2)
+        return float(x), float(self.mass * (u - self.g * abs(tau)))

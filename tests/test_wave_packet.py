@@ -2,8 +2,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from elements.quantum.continuous_approx import CyclicalGrid1DStateSpace
-from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator
+from elements.quantum.continuous_approx import (
+    CyclicalGrid1DStateSpace,
+    FreeParticle,
+    Gravity,
+    HarmonicOscillator,
+)
 from tools.wave_packet import WavePacketExplorer
 
 

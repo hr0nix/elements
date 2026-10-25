@@ -4,48 +4,51 @@ import pytest
 from elements.quantum.continuous_approx import (
     ContinuousBasis,
     CyclicalGrid1DStateSpace,
+    FreeParticle,
+    Gravity,
+    HarmonicOscillator,
     Operators1D,
     States1D,
+    Task1D,
 )
 from elements.quantum.evolution import EigenbasisEvolution
-from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
 
 grid = CyclicalGrid1DStateSpace(-30.0, 30.0, 601)
 x, p = Operators1D.position(grid), Operators1D.momentum(grid)
 
 
-def evolution(task: Task, x0: float, p0: float, sigma: float, mass: float) -> EigenbasisEvolution:
+def evolution(task: Task1D, x0: float, p0: float, sigma: float) -> EigenbasisEvolution:
     packet = States1D.packet(grid, x0, p0, sigma)
-    return EigenbasisEvolution(task.hamiltonian(grid, mass), packet)
+    return EigenbasisEvolution(task.hamiltonian(grid), packet)
 
 
 def spread(packet) -> float:
     return np.sqrt((x @ x).expectation(packet) - x.expectation(packet) ** 2)
 
 
-def assert_follows_classical(task: Task, x0: float, p0: float, mass: float, times) -> None:
-    packets = evolution(task, x0, p0, sigma=1.0, mass=mass)
+def assert_follows_classical(task: Task1D, x0: float, p0: float, times) -> None:
+    packets = evolution(task, x0, p0, sigma=1.0)
     for time in times:
         packet = packets.state_at(time)
-        classical_x, classical_p = task.classical(x0, p0, mass, time)
+        classical_x, classical_p = task.classical_state(x0, p0, time)
         assert x.expectation(packet) == pytest.approx(classical_x, abs=1e-6)
         assert p.expectation(packet) == pytest.approx(classical_p, abs=1e-6)
 
 
 def test_free_packet_expectations_follow_the_classical_particle():
-    assert_follows_classical(FreeParticle(), x0=-5.0, p0=2.0, mass=1.5, times=(0.0, 1.0, 4.0))
+    assert_follows_classical(FreeParticle(mass=1.5), x0=-5.0, p0=2.0, times=(0.0, 1.0, 4.0))
 
 
 def test_free_packet_spreads_as_the_textbook_formula_says():
     sigma, mass = 0.8, 1.0
-    packets = evolution(FreeParticle(), x0=0.0, p0=1.0, sigma=sigma, mass=mass)
+    packets = evolution(FreeParticle(mass=mass), x0=0.0, p0=1.0, sigma=sigma)
     for time in (0.0, 2.0, 5.0):
         expected = sigma * np.sqrt(1 + (time / (2 * mass * sigma**2)) ** 2)
         assert spread(packets.state_at(time)) == pytest.approx(expected)
 
 
 def test_free_packet_momentum_distribution_does_not_change():
-    packets = evolution(FreeParticle(), x0=-3.0, p0=1.5, sigma=1.0, mass=0.7)
+    packets = evolution(FreeParticle(mass=0.7), x0=-3.0, p0=1.5, sigma=1.0)
     momentum = ContinuousBasis(p)
     initial = momentum.wavefunction(packets.state_at(0.0))
     later = momentum.wavefunction(packets.state_at(6.0))
@@ -53,53 +56,57 @@ def test_free_packet_momentum_distribution_does_not_change():
 
 
 def test_oscillator_levels_are_spaced_by_omega():
-    task, mass = HarmonicOscillator(), 2.0
-    omega = np.sqrt(task.spring_constant / mass)
-    energies = task.hamiltonian(grid, mass).eigenvalues[:5]
-    assert energies == pytest.approx(omega * (np.arange(5) + 0.5))
+    task = HarmonicOscillator(mass=2.0)
+    energies = task.hamiltonian(grid).eigenvalues[:5]
+    assert energies == pytest.approx(task.omega * (np.arange(5) + 0.5))
 
 
 def test_oscillator_expectations_follow_the_classical_orbit_exactly():
     times = (0.0, 3.0, 7.5, 20.0)
-    assert_follows_classical(HarmonicOscillator(), x0=6.0, p0=1.0, mass=1.5, times=times)
+    assert_follows_classical(HarmonicOscillator(mass=1.5), x0=6.0, p0=1.0, times=times)
 
 
 def test_oscillator_returns_a_classical_particle_to_its_start_after_one_period():
-    task, mass = HarmonicOscillator(), 1.5
-    period = 2 * np.pi / np.sqrt(task.spring_constant / mass)
-    assert task.classical(6.0, 1.0, mass, period) == pytest.approx((6.0, 1.0))
+    task = HarmonicOscillator(mass=1.5)
+    period = 2 * np.pi / task.omega
+    assert task.classical_state(6.0, 1.0, period) == pytest.approx((6.0, 1.0))
 
 
 def test_coherent_state_keeps_its_width_while_other_packets_breathe():
-    task, mass = HarmonicOscillator(), 1.0
-    coherent_width = np.sqrt(1 / (2 * mass * np.sqrt(task.spring_constant / mass)))
-    coherent = evolution(task, x0=-8.0, p0=0.0, sigma=coherent_width, mass=mass)
-    squeezed = evolution(task, x0=-8.0, p0=0.0, sigma=0.5 * coherent_width, mass=mass)
+    task = HarmonicOscillator(mass=1.0)
+    coherent_width = np.sqrt(1 / (2 * task.mass * task.omega))
+    coherent = evolution(task, x0=-8.0, p0=0.0, sigma=coherent_width)
+    squeezed = evolution(task, x0=-8.0, p0=0.0, sigma=0.5 * coherent_width)
     for time in (1.0, 2.5, 4.0):
         assert spread(coherent.state_at(time)) == pytest.approx(coherent_width)
         assert spread(squeezed.state_at(time)) != pytest.approx(0.5 * coherent_width, rel=0.05)
 
 
 def test_gravity_levels_are_airy_zeros():
-    task, mass = Gravity(g=0.5), 1.0
-    scale = (mass * task.g**2 / 2) ** (1 / 3)
+    task = Gravity(mass=1.0, g=0.5)
+    scale = (task.mass * task.g**2 / 2) ** (1 / 3)
     first_zero_of_airy_derivative, first_zero_of_airy = 1.018792971647471, 2.338107410459767
-    energies = task.hamiltonian(grid, mass).eigenvalues[:2]
+    energies = task.hamiltonian(grid).eigenvalues[:2]
     expected = scale * np.array([first_zero_of_airy_derivative, first_zero_of_airy])
     assert energies == pytest.approx(expected, rel=1e-3)
 
 
 def test_falling_packet_follows_the_classical_parabola_until_it_reaches_the_object():
-    assert_follows_classical(Gravity(g=0.5), x0=-15.0, p0=0.0, mass=1.0, times=(0.0, 2.0, 4.0))
+    assert_follows_classical(Gravity(mass=1.0, g=0.5), x0=-15.0, p0=0.0, times=(0.0, 2.0, 4.0))
 
 
 def test_classical_particle_falls_through_the_object_and_conserves_energy():
-    task, mass, x0, p0 = Gravity(g=0.5), 2.0, -6.0, 1.0
-    energy = p0**2 / (2 * mass) + mass * task.g * abs(x0)
+    task, x0, p0 = Gravity(mass=2.0, g=0.5), -6.0, 1.0
+    energy = task.classical_energy(x0, p0)
     positions = []
     for time in np.linspace(0.0, 40.0, 81):
-        position, momentum = task.classical(x0, p0, mass, time)
+        position, momentum = task.classical_state(x0, p0, time)
         positions.append(position)
-        assert momentum**2 / (2 * mass) + mass * task.g * abs(position) == pytest.approx(energy)
+        assert task.classical_energy(position, momentum) == pytest.approx(energy)
     assert min(positions) < 0 < max(positions)
-    assert task.classical(x0, p0, mass, 0.0) == pytest.approx((x0, p0))
+    assert task.classical_state(x0, p0, 0.0) == pytest.approx((x0, p0))
+
+
+def test_equal_tasks_share_a_hamiltonian():
+    first, second = HarmonicOscillator(mass=2.0), HarmonicOscillator(mass=2.0)
+    assert first.hamiltonian(grid) is second.hamiltonian(grid)
