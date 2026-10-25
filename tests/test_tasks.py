@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from scipy.special import ai_zeros
 
 from elements.quantum.continuous_approx import (
     ContinuousBasis,
@@ -83,9 +84,11 @@ def test_coherent_state_keeps_its_width_while_other_packets_breathe():
 def test_gravity_levels_are_airy_zeros():
     task = Gravity(mass=1.0, g=0.5)
     scale = (task.mass * task.g**2 / 2) ** (1 / 3)
-    first_zero_of_airy_derivative, first_zero_of_airy = 1.018792971647471, 2.338107410459767
+    # Levels even about x = 0 have zero slope there, so they sit at zeros of Ai'. Odd levels
+    # vanish there, at zeros of Ai. The two kinds alternate, starting with an even level.
+    zeros, derivative_zeros, _, _ = ai_zeros(1)
     energies = task.hamiltonian(grid).eigenvalues[:2]
-    expected = scale * np.array([first_zero_of_airy_derivative, first_zero_of_airy])
+    expected = -scale * np.array([derivative_zeros[0], zeros[0]])
     assert energies == pytest.approx(expected, rel=1e-3)
 
 

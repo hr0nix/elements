@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from matplotlib.backend_bases import KeyEvent, MouseButton, MouseEvent
-from numpy.polynomial.hermite import hermval
+from scipy.special import eval_hermite
 
 from elements.quantum.continuous_approx import (
     CyclicalGrid1DStateSpace,
@@ -50,10 +50,8 @@ def test_eigenvectors_shown_in_their_own_basis_overlap_like_the_identity(explore
 
 
 def hermite_function(n: int, u: np.ndarray) -> np.ndarray:
-    coefficients = np.zeros(n + 1)
-    coefficients[n] = 1.0
     norm = np.sqrt(2.0**n * math.factorial(n) * np.sqrt(np.pi))
-    return hermval(u, coefficients) * np.exp(-(u**2) / 2) / norm
+    return eval_hermite(n, u) * np.exp(-(u**2) / 2) / norm
 
 
 # The Fourier transform of the n-th Hermite function is (-i)^n times itself, with momentum in

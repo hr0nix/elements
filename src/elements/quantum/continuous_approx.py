@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import numpy as np
+from scipy.stats import norm
 
 from elements.math.utils import frozen, nearly_equal
 from elements.quantum.basis import Basis
@@ -143,11 +144,18 @@ class Operators1D:
 
 
 class States1D:
-    # exp(i momentum x) / sqrt(length): spread evenly over the circle, with total probability 1.
+    # At rest and equally likely to be anywhere on the circle: the plane wave of momentum 0.
+    @staticmethod
+    @cached
+    def uniform(grid: CyclicalGrid1DStateSpace) -> StateSpaceVector:
+        position = ContinuousBasis(Operators1D.position(grid))
+        probability_density = np.full(grid.num_points, 1 / grid.length)
+        return position.ket(np.sqrt(probability_density))
+
+    # exp(i momentum x) / sqrt(length): the uniform state, boosted.
     @staticmethod
     def plane_wave(grid: CyclicalGrid1DStateSpace, momentum: float) -> StateSpaceVector:
-        position = ContinuousBasis(Operators1D.position(grid))
-        return position.ket(np.exp(1j * momentum * position.points) / np.sqrt(grid.length))
+        return Operators1D.boost(grid, momentum) @ States1D.uniform(grid)
 
     @staticmethod
     @cached
@@ -155,11 +163,12 @@ class States1D:
         if sigma <= 0:
             raise ValueError("Packet width must be positive")
         position = ContinuousBasis(Operators1D.position(grid))
-        x = position.points - grid.middle
-        wavefunction = (2 * np.pi * sigma**2) ** -0.25 * np.exp(-(x**2) / (4 * sigma**2))
+        # A real wavefunction whose square, the probability density, is a normal distribution
+        # with standard deviation sigma.
+        probability_density = norm.pdf(position.points, loc=grid.middle, scale=sigma)
         # The circle cuts off the tails of a packet nearly as wide as itself, which leaves the
         # norm short of 1.
-        return position.ket(wavefunction).normalized
+        return position.ket(np.sqrt(probability_density)).normalized
 
     @staticmethod
     @cached
