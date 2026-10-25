@@ -3,7 +3,6 @@ import math
 import numpy as np
 
 from elements.quantum.spin import Spin, TwoSpins
-from elements.quantum.evolution import EigenbasisEvolution
 
 sigma_x, sigma_y, sigma_z = Spin.sigma_x, Spin.sigma_y, Spin.sigma_z
 sigma_x_tau_x = sigma_x.tensor_product(sigma_x)
@@ -47,14 +46,13 @@ def test_exercise_6_10():
     assert energies == pytest.approx([-1.5 * w, 0.5 * w, 0.5 * w, 0.5 * w])
 
     # UU only picks up a phase
-    from_uu = EigenbasisEvolution(H, TwoSpins.uu)
-    assert from_uu.state_at(1.0).close_to(
+    assert (H.unitary(1.0) @ TwoSpins.uu).close_to(
         np.exp(-1j * w * 0.5 * 1.0) * TwoSpins.uu)
-    assert from_uu.state_at(1.3).normalized.close_to(
+    assert (H.unitary(1.3) @ TwoSpins.uu).normalized.close_to(
         np.exp(-1j * w * 0.5 * 1.3) * TwoSpins.uu)
 
     # UD picks up a phase and a relative phase
-    assert EigenbasisEvolution(H, TwoSpins.ud).state_at(1.6).normalized.close_to(
+    assert (H.unitary(1.6) @ TwoSpins.ud).normalized.close_to(
         np.sqrt(1/2) * np.exp(-1j * w * 0.5 * 1.6) * (
             TwoSpins.triplet_1 +
             np.exp(1j * w * 2.0 * 1.6) * TwoSpins.singlet

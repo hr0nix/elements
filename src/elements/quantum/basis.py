@@ -1,3 +1,4 @@
+import itertools
 from collections.abc import Iterator, Sequence
 
 import numpy as np
@@ -67,6 +68,12 @@ class Basis:
         if other.state_space != self.state_space:
             raise ValueError("Overlaps need two bases of the same state space")
         return self.matrix.conj().T @ other.matrix
+
+    # Products of one ket from each basis, in the order of the product space's labels.
+    def tensor_product(self, *others: Basis) -> Basis:
+        return Basis(
+            [first.tensor_product(*rest) for first, *rest in itertools.product(self, *others)]
+        )
 
     def reordered(self, order: Sequence[int]) -> Basis:
         if np.array_equal(order, np.arange(len(self))):

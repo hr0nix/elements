@@ -23,6 +23,22 @@ def test_pauli_matrices_built_from_their_eigenstates_match_the_textbook():
     assert np.allclose(sigma_z.matrix, [[1, 0], [0, -1]])
 
 
+def test_an_operator_is_given_by_a_matrix_or_by_eigenvalues_on_an_eigenbasis():
+    space, z_basis = Spin.state_space, Spin.state_space.basis
+    assert Operator.diagonal(z_basis, [1, -1]).close_to(
+        Operator.from_matrix(space, [[1, 0], [0, -1]])
+    )
+    with pytest.raises(ValueError, match="one eigenvalue per"):
+        Operator.diagonal(z_basis, [1, -1, 0])
+    # The named constructors never get these wrong, but the shared constructor checks anyway.
+    with pytest.raises(ValueError, match="not both"):
+        Operator(space, matrix=sigma_z.matrix, eigenvalues=[1, -1], eigenbasis=z_basis)
+    with pytest.raises(ValueError, match="needs a matrix or its spectrum"):
+        Operator(space)
+    with pytest.raises(ValueError, match="together"):
+        Operator(space, eigenvalues=[1, -1])
+
+
 def test_operators_can_be_assembled_from_outer_products():
     up, down = Spin.z_plus, Spin.z_minus
     assert (up @ up.dagger - down @ down.dagger).close_to(sigma_z)
@@ -66,6 +82,15 @@ def test_a_mixture_is_a_density_whose_eigenvalues_are_the_probabilities():
         sigma_z.expectation(sigma_x)
 
 
+def test_eigenbasis_coordinates_give_probabilities_whose_mean_is_the_expectation():
+    hamiltonian = sigma_x + 2 * sigma_z
+    state = 0.6 * Spin.z_plus + 0.8 * Spin.z_minus
+    probabilities = abs(hamiltonian.eigenbasis.coordinates(state)) ** 2
+    assert probabilities.sum() == pytest.approx(1.0)
+    expectation = hamiltonian.expectation(state)
+    assert probabilities @ hamiltonian.eigenvalues == pytest.approx(expectation)
+
+
 def test_a_pure_density_gives_the_expectations_of_its_ket():
     pure = Operator.density(Spin.y_plus)
     for sigma in (sigma_x, sigma_y, sigma_z):
@@ -88,6 +113,11 @@ def test_tensor_product_builds_operators_on_a_pair_of_spins():
     assert (sigma_z_on_second @ ud).close_to(-ud)
     assert not (sigma_z_on_first @ ud).close_to(sigma_z_on_second @ ud)
     assert (flip_both @ ud).close_to(du)
+
+
+def test_eigenvalues_of_a_tensor_product_are_products_of_eigenvalues():
+    weights = Operator.spectral([(3, Spin.z_plus), (5, Spin.z_minus)])
+    assert (2 * sigma_x).tensor_product(weights).eigenvalues == pytest.approx([-10, -6, 6, 10])
 
 
 def test_partial_trace_of_a_product_scales_the_kept_factor_by_the_trace_of_the_rest():
@@ -178,7 +208,8 @@ def test_hermitian_operators_list_their_eigenpairs_by_increasing_eigenvalue():
 def test_real_symmetric_operators_get_real_eigenvectors():
     rng = np.random.default_rng(2)
     values = rng.normal(size=(6, 6))
-    operator = Operator(StateSpace(*(str(label) for label in range(6))), values + values.T)
+    space = StateSpace(*(str(label) for label in range(6)))
+    operator = Operator.from_matrix(space, values + values.T)
     for value, vector in zip(operator.eigenvalues, operator.eigenbasis, strict=True):
         assert not vector.components.imag.any()
         assert (operator @ vector).close_to(vector * value)

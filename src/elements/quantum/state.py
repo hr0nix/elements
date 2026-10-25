@@ -183,7 +183,7 @@ class StateSpaceVector:
         if not (self.is_ket and other.is_bra):
             raise ValueError("Outer product requires a ket and a bra; use .dagger to convert")
 
-        return Operator(self.state_space, self.components @ other.components)
+        return Operator.from_matrix(self.state_space, self.components @ other.components)
 
     def __matmul__(self, other: StateSpaceVector) -> complex | Operator:
         if not isinstance(other, StateSpaceVector):

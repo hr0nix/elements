@@ -18,7 +18,6 @@ from elements.quantum.continuous_approx import (
     States1D,
     Task1D,
 )
-from elements.quantum.evolution import EigenbasisEvolution
 from elements.quantum.state import StateSpaceVector
 from tools.plotting import POTENTIAL_COLOR, radio_buttons, show_wavefunction, wavefunction_lines
 
@@ -77,7 +76,7 @@ class WavePacketExplorer:
             self.time += self.sliders["speed"].val * seconds
         else:
             return
-        self._show(self.evolution.state_at(self.time))
+        self._show(self.hamiltonian.unitary(self.time) @ self.packet)
 
     def _seconds_since_last_frame(self) -> float:
         now = time.perf_counter()
@@ -102,14 +101,13 @@ class WavePacketExplorer:
         values = {name: slider.val for name, slider in self.sliders.items()}
         self.task = replace(self.task, mass=values["mass"])
         x0, p0 = self._initial = (values["x0"], values["p0"])
-        packet = States1D.packet(self.grid, x0, p0, values["sigma"])
-        hamiltonian = self.task.hamiltonian(self.grid)
-        self.evolution = EigenbasisEvolution(hamiltonian, packet)
+        self.packet = States1D.packet(self.grid, x0, p0, values["sigma"])
+        self.hamiltonian = self.task.hamiltonian(self.grid)
         self.time = 0.0
         self.history = {key: [] for key in ("time", "x", "p", "classical_x", "classical_p")}
-        energy = hamiltonian.expectation(packet)
+        energy = self.hamiltonian.expectation(self.packet)
         self._build_energy_bars(energy, self.task.classical_energy(x0, p0))
-        self._rescale(packet)
+        self._rescale(self.packet)
         self._show_potential(energy)
         self._show_escape_momentum(x0)
         self._restart_pending = False
@@ -159,8 +157,8 @@ class WavePacketExplorer:
     # the energies is what would make the motion exactly periodic; only the departures from it
     # are kept for colouring the phases.
     def _build_energy_bars(self, energy: float, classical_energy: float) -> None:
-        energies = self.evolution.energies
-        weights = np.abs(self.evolution.energy_components) ** 2
+        energies = self.hamiltonian.eigenvalues
+        weights = np.abs(self.hamiltonian.eigenbasis.coordinates(self.packet)) ** 2
         held = np.flatnonzero(weights > 1e-3 * weights.max())
         levels = np.arange(max(held[0] - 2, 0), min(held[-1] + 3, len(weights)))
         self._level_weights = weights[levels]

@@ -11,15 +11,15 @@ from elements.quantum.continuous_approx import (
     States1D,
     Task1D,
 )
-from elements.quantum.evolution import EigenbasisEvolution
+from elements.quantum.state import StateSpaceVector
 
 grid = CyclicalGrid1DStateSpace(-30.0, 30.0, 601)
 x, p = Operators1D.position(grid), Operators1D.momentum(grid)
 
 
-def evolution(task: Task1D, x0: float, p0: float, sigma: float) -> EigenbasisEvolution:
+def evolve(task: Task1D, x0: float, p0: float, sigma: float, time: float) -> StateSpaceVector:
     packet = States1D.packet(grid, x0, p0, sigma)
-    return EigenbasisEvolution(task.hamiltonian(grid), packet)
+    return task.hamiltonian(grid).unitary(time) @ packet
 
 
 def spread(packet) -> float:
@@ -27,9 +27,8 @@ def spread(packet) -> float:
 
 
 def assert_follows_classical(task: Task1D, x0: float, p0: float, times) -> None:
-    packets = evolution(task, x0, p0, sigma=1.0)
     for time in times:
-        packet = packets.state_at(time)
+        packet = evolve(task, x0, p0, sigma=1.0, time=time)
         classical_x, classical_p = task.classical_state(x0, p0, time)
         assert x.expectation(packet) == pytest.approx(classical_x, abs=1e-6)
         assert p.expectation(packet) == pytest.approx(classical_p, abs=1e-6)
@@ -41,17 +40,16 @@ def test_free_packet_expectations_follow_the_classical_particle():
 
 def test_free_packet_spreads_as_the_textbook_formula_says():
     sigma, mass = 0.8, 1.0
-    packets = evolution(FreeParticle(mass=mass), x0=0.0, p0=1.0, sigma=sigma)
     for time in (0.0, 2.0, 5.0):
+        packet = evolve(FreeParticle(mass=mass), x0=0.0, p0=1.0, sigma=sigma, time=time)
         expected = sigma * np.sqrt(1 + (time / (2 * mass * sigma**2)) ** 2)
-        assert spread(packets.state_at(time)) == pytest.approx(expected)
+        assert spread(packet) == pytest.approx(expected)
 
 
 def test_free_packet_momentum_distribution_does_not_change():
-    packets = evolution(FreeParticle(mass=0.7), x0=-3.0, p0=1.5, sigma=1.0)
-    momentum = ContinuousBasis(p)
-    initial = momentum.wavefunction(packets.state_at(0.0))
-    later = momentum.wavefunction(packets.state_at(6.0))
+    task, momentum = FreeParticle(mass=0.7), ContinuousBasis(p)
+    initial = momentum.wavefunction(evolve(task, x0=-3.0, p0=1.5, sigma=1.0, time=0.0))
+    later = momentum.wavefunction(evolve(task, x0=-3.0, p0=1.5, sigma=1.0, time=6.0))
     assert np.allclose(np.abs(initial), np.abs(later))
 
 
@@ -75,11 +73,11 @@ def test_oscillator_returns_a_classical_particle_to_its_start_after_one_period()
 def test_coherent_state_keeps_its_width_while_other_packets_breathe():
     task = HarmonicOscillator(mass=1.0)
     coherent_width = np.sqrt(1 / (2 * task.mass * task.omega))
-    coherent = evolution(task, x0=-8.0, p0=0.0, sigma=coherent_width)
-    squeezed = evolution(task, x0=-8.0, p0=0.0, sigma=0.5 * coherent_width)
     for time in (1.0, 2.5, 4.0):
-        assert spread(coherent.state_at(time)) == pytest.approx(coherent_width)
-        assert spread(squeezed.state_at(time)) != pytest.approx(0.5 * coherent_width, rel=0.05)
+        coherent = evolve(task, x0=-8.0, p0=0.0, sigma=coherent_width, time=time)
+        squeezed = evolve(task, x0=-8.0, p0=0.0, sigma=0.5 * coherent_width, time=time)
+        assert spread(coherent) == pytest.approx(coherent_width)
+        assert spread(squeezed) != pytest.approx(0.5 * coherent_width, rel=0.05)
 
 
 def test_gravity_levels_are_airy_zeros():
