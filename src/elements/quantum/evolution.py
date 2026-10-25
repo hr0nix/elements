@@ -7,7 +7,7 @@ from elements.quantum.state import StateSpaceVector
 
 class EigenbasisEvolution:
     # Expands the initial state in energy eigenstates once, so that every later state costs a
-    # matrix-vector product instead of a fresh exponential of the Hamiltonian.
+    # matrix-vector product instead of a fresh hamiltonian.unitary(time).
     def __init__(self, hamiltonian: Operator, initial: StateSpaceVector):
         if not initial.is_ket or initial.state_space != hamiltonian.state_space:
             raise ValueError("Initial state must be a ket from the Hamiltonian's state space")

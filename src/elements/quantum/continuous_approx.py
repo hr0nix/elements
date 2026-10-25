@@ -126,18 +126,20 @@ class Operators1D:
     ) -> Operator:
         return Operators1D.kinetic_energy(grid, mass) + Operators1D.potential_energy(grid, v)
 
-    # exp(-i distance P): moves a state round the circle by any distance, not only whole ticks.
+    # Moves a state round the circle by any distance, not only whole ticks.
     @staticmethod
     @cached
     def translation(grid: CyclicalGrid1DStateSpace, distance: float) -> Operator:
-        return (-1j * distance * Operators1D.momentum(grid)).exp()
+        return Operators1D.momentum(grid).unitary(distance)
 
-    # exp(i momentum X). Unless momentum is a multiple of 2 pi / length, the phase jumps at the
-    # seam, so only boost states that vanish there.
+    # Raises the momentum of a state. Position generates shifts of momentum the opposite way
+    # to how momentum generates shifts of position, as [P, X] = -[X, P]. Unless momentum is a
+    # multiple of 2 pi / length, the phase jumps at the seam, so only boost states that vanish
+    # there.
     @staticmethod
     @cached
     def boost(grid: CyclicalGrid1DStateSpace, momentum: float) -> Operator:
-        return (1j * momentum * Operators1D.position(grid)).exp()
+        return Operators1D.position(grid).unitary(-momentum)
 
 
 class States1D:

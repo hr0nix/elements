@@ -17,7 +17,7 @@ def test_eigenbasis_evolution_agrees_with_exponentiating_the_hamiltonian():
     )
     evolution = EigenbasisEvolution(hamiltonian, TwoSpins.ud)
     for time in (0.0, 0.7, 2.3):
-        expected = (-1j * time * hamiltonian).exp() @ TwoSpins.ud
+        expected = hamiltonian.unitary(time) @ TwoSpins.ud
         assert evolution.state_at(time).close_to(expected)
 
 

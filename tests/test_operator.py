@@ -208,23 +208,28 @@ def test_non_normal_operators_have_no_eigenbasis_to_exponentiate():
         pytest.param((sigma_x + sigma_z) / math.sqrt(2), id="xz diagonal"),
     ],
 )
-def test_exponentials_of_operators_squaring_to_identity_have_a_closed_form(sigma):
+def test_unitaries_generated_by_operators_squaring_to_identity_have_a_closed_form(sigma):
     theta = 0.7
     closed_form = math.cos(theta) * identity - 1j * math.sin(theta) * sigma
-    assert (-1j * theta * sigma).exp().close_to(closed_form)
+    assert sigma.unitary(theta).close_to(closed_form)
 
 
-def test_imaginary_exponentials_of_a_hermitian_operator_are_unitaries_whose_exponents_add():
+def test_a_hermitian_operator_generates_unitaries_whose_parameters_add():
     hamiltonian = sigma_x + 2 * sigma_z
-    evolution = (-0.3j * hamiltonian).exp()
+    evolution = hamiltonian.unitary(0.3)
     assert (evolution.dagger @ evolution).close_to(identity)
-    assert ((-0.1j * hamiltonian).exp() @ (-0.2j * hamiltonian).exp()).close_to(evolution)
+    assert (hamiltonian.unitary(0.1) @ hamiltonian.unitary(0.2)).close_to(evolution)
+
+
+def test_only_hermitian_operators_generate_unitaries():
+    with pytest.raises(ValueError, match="Hermitian"):
+        (sigma_x @ sigma_y).unitary(0.3)
 
 
 def test_spin_in_a_magnetic_field_along_z_precesses_around_it():
     omega, t = 2.0, 0.4
     hamiltonian = omega / 2 * sigma_z
-    state = (-1j * t * hamiltonian).exp() @ Spin.x_plus
+    state = hamiltonian.unitary(t) @ Spin.x_plus
     assert sigma_x.expectation(state) == pytest.approx(math.cos(omega * t))
     assert sigma_y.expectation(state) == pytest.approx(math.sin(omega * t))
     assert sigma_z.expectation(state) == pytest.approx(0)
@@ -232,7 +237,7 @@ def test_spin_in_a_magnetic_field_along_z_precesses_around_it():
 
 def test_energy_eigenstates_only_pick_up_a_phase():
     t = 0.9
-    evolution = (-1j * t * sigma_dot_tau).exp()
+    evolution = sigma_dot_tau.unitary(t)
     assert (evolution @ TwoSpins.singlet).close_to(cmath.exp(3j * t) * TwoSpins.singlet)
     for triplet in (TwoSpins.triplet_1, TwoSpins.triplet_2, TwoSpins.triplet_3):
         assert (evolution @ triplet).close_to(cmath.exp(-1j * t) * triplet)
