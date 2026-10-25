@@ -3,7 +3,7 @@ import pytest
 from elements.quantum.continuous_approx import (
     CyclicalGrid1DStateSpace,
     Operators1D,
-    WaveFunctions1D,
+    States1D,
 )
 from elements.quantum.evolution import EigenbasisEvolution
 from elements.quantum.spin import Spin, TwoSpins
@@ -24,14 +24,14 @@ def test_eigenbasis_evolution_agrees_with_exponentiating_the_hamiltonian():
 def test_eigenbasis_evolution_keeps_states_normalized():
     grid = CyclicalGrid1DStateSpace(-10.0, 10.0, 101)
     hamiltonian = Operators1D.hamiltonian(grid, mass=1.0, v=lambda x: 0.5 * x**2)
-    packet = WaveFunctions1D.packet(grid, x0=2.0, p0=0.5, sigma=1.0)
+    packet = States1D.packet(grid, x0=2.0, p0=0.5, sigma=1.0)
     assert EigenbasisEvolution(hamiltonian, packet).state_at(7.3).norm == pytest.approx(1.0)
 
 
 def test_energy_components_hold_the_whole_state_and_give_its_mean_energy():
     grid = CyclicalGrid1DStateSpace(-10.0, 10.0, 101)
     hamiltonian = Operators1D.hamiltonian(grid, mass=1.0, v=lambda x: 0.5 * x**2)
-    packet = WaveFunctions1D.packet(grid, x0=2.0, p0=0.5, sigma=1.0)
+    packet = States1D.packet(grid, x0=2.0, p0=0.5, sigma=1.0)
     evolution = EigenbasisEvolution(hamiltonian, packet)
     weights = abs(evolution.energy_components) ** 2
     assert weights.sum() == pytest.approx(1.0)
@@ -40,7 +40,7 @@ def test_energy_components_hold_the_whole_state_and_give_its_mean_energy():
 
 def test_evolution_needs_a_hermitian_hamiltonian():
     grid = CyclicalGrid1DStateSpace(-10.0, 10.0, 21)
-    packet = WaveFunctions1D.packet(grid, x0=2.0, p0=0.5, sigma=1.0)
+    packet = States1D.packet(grid, x0=2.0, p0=0.5, sigma=1.0)
     with pytest.raises(ValueError, match="Hermitian"):
         EigenbasisEvolution(Operators1D.translation(grid, 0.3), packet)
 

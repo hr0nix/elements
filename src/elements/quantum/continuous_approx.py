@@ -52,13 +52,36 @@ class CyclicalGrid1DStateSpace(StateSpace):
     def dx(self) -> float:
         return self.length / self.num_points
 
-    # The ket whose component along each position eigenvector |x>, a basis ket of the grid,
-    # is f(x).
-    def sample(self, f: Callable[[np.ndarray], np.ndarray]) -> StateSpaceVector:
-        return self.basis.ket(f(self.ticks))
-
     def __repr__(self) -> str:
         return f"CyclicalGrid1DStateSpace(min_x={self.min_x}, max_x={self.max_x}, dx={self.dx})"
+
+
+class ContinuousBasis:
+    # The eigenbasis of a Hermitian operator whose eigenvalues sample a continuum at even
+    # spacing, such as position or momentum on the grid. Kets |x> of a continuous basis are
+    # normalized to a delta function, <x|x'> = delta(x - x'), which on the grid makes
+    # |x> = |x_i> / sqrt(dx), with dx the spacing between eigenvalues.
+    def __init__(self, operator: Operator):
+        if not operator.is_hermitian:
+            raise ValueError("A continuous basis is the eigenbasis of a Hermitian operator")
+        spacings = np.diff(operator.eigenvalues)
+        if spacings[0] <= 0 or not nearly_equal(spacings, spacings[0]):
+            raise ValueError("Eigenvalues must be distinct and evenly spaced")
+        self.points = operator.eigenvalues
+        self.spacing = float(spacings[0])
+        self.basis = operator.eigenbasis
+
+    # psi(x) = <x|psi> at each point x.
+    def wavefunction(self, ket: StateSpaceVector) -> np.ndarray:
+        return self.basis.coordinates(ket) / np.sqrt(self.spacing)
+
+    # Column j is the wavefunction of kets[j].
+    def wavefunctions(self, kets: Basis) -> np.ndarray:
+        return self.basis.overlaps(kets) / np.sqrt(self.spacing)
+
+    # |psi> = integral of psi(x) |x> dx, which on the grid is a sum over the points.
+    def ket(self, wavefunction: np.ndarray) -> StateSpaceVector:
+        return self.basis.ket(np.asarray(wavefunction) * np.sqrt(self.spacing))
 
 
 class Operators1D:
@@ -74,7 +97,7 @@ class Operators1D:
     def momentum(grid: CyclicalGrid1DStateSpace) -> Operator:
         quanta = np.arange(grid.num_points) - grid.num_points // 2
         momenta = 2 * np.pi / grid.length * quanta
-        plane_waves = Basis([WaveFunctions1D.plane_wave(grid, p) for p in momenta])
+        plane_waves = Basis([States1D.plane_wave(grid, p) for p in momenta])
         return Operator.diagonal(plane_waves, momenta)
 
     @staticmethod
@@ -114,17 +137,24 @@ class Operators1D:
         return (1j * momentum * Operators1D.position(grid)).exp()
 
 
-class WaveFunctions1D:
+class States1D:
+    # exp(i momentum x) / sqrt(length): spread evenly over the circle, with total probability 1.
     @staticmethod
     def plane_wave(grid: CyclicalGrid1DStateSpace, momentum: float) -> StateSpaceVector:
-        return grid.sample(lambda x: np.exp(1j * momentum * x)).normalized
+        position = ContinuousBasis(Operators1D.position(grid))
+        return position.ket(np.exp(1j * momentum * position.points) / np.sqrt(grid.length))
 
     @staticmethod
     @cached
     def gaussian_at_rest(grid: CyclicalGrid1DStateSpace, sigma: float) -> StateSpaceVector:
         if sigma <= 0:
             raise ValueError("Packet width must be positive")
-        return grid.sample(lambda x: np.exp(-((x - grid.middle) ** 2) / (4 * sigma**2))).normalized
+        position = ContinuousBasis(Operators1D.position(grid))
+        x = position.points - grid.middle
+        wavefunction = (2 * np.pi * sigma**2) ** -0.25 * np.exp(-(x**2) / (4 * sigma**2))
+        # The circle cuts off the tails of a packet nearly as wide as itself, which leaves the
+        # norm short of 1.
+        return position.ket(wavefunction).normalized
 
     @staticmethod
     @cached
@@ -132,33 +162,5 @@ class WaveFunctions1D:
         grid: CyclicalGrid1DStateSpace, x0: float, p0: float, sigma: float
     ) -> StateSpaceVector:
         # Boost opposite the seam, where the packet at rest vanishes, then move it into place.
-        moving = Operators1D.boost(grid, p0) @ WaveFunctions1D.gaussian_at_rest(grid, sigma)
+        moving = Operators1D.boost(grid, p0) @ States1D.gaussian_at_rest(grid, sigma)
         return Operators1D.translation(grid, x0 - grid.middle) @ moving
-
-    @staticmethod
-    def position_wavefunction(vector: StateSpaceVector) -> tuple[np.ndarray, np.ndarray]:
-        return WaveFunctions1D.wavefunction(Operators1D.position(vector.state_space), vector)
-
-    @staticmethod
-    def momentum_wavefunction(vector: StateSpaceVector) -> tuple[np.ndarray, np.ndarray]:
-        return WaveFunctions1D.wavefunction(Operators1D.momentum(vector.state_space), vector)
-
-    # The eigenvalues of a Hermitian operator that samples a continuum, and the vector's
-    # amplitude density over them.
-    @staticmethod
-    def wavefunction(operator: Operator, vector: StateSpaceVector) -> tuple[np.ndarray, np.ndarray]:
-        if not operator.is_hermitian:
-            raise ValueError("Wavefunctions are read off the eigenbasis of a Hermitian operator")
-        eigenvalues = operator.eigenvalues
-        amplitudes = operator.eigenbasis.coordinates(vector)
-        return eigenvalues, WaveFunctions1D.amplitude_density(eigenvalues, amplitudes)
-
-    # Each amplitude along an eigenvector is the amplitude for a cell as wide as the spacing
-    # between eigenvalues, so dividing by the square root of that spacing turns amplitudes into
-    # an amplitude density. Amplitudes run along the first axis, one per eigenvalue.
-    @staticmethod
-    def amplitude_density(eigenvalues: np.ndarray, amplitudes: np.ndarray) -> np.ndarray:
-        spacings = np.diff(eigenvalues)
-        if spacings[0] <= 0 or not nearly_equal(spacings, spacings[0]):
-            raise ValueError("Eigenvalues must be distinct and evenly spaced")
-        return amplitudes / np.sqrt(spacings[0])

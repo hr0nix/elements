@@ -2,9 +2,10 @@ import numpy as np
 import pytest
 
 from elements.quantum.continuous_approx import (
+    ContinuousBasis,
     CyclicalGrid1DStateSpace,
     Operators1D,
-    WaveFunctions1D,
+    States1D,
 )
 from elements.quantum.evolution import EigenbasisEvolution
 from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
@@ -14,7 +15,7 @@ x, p = Operators1D.position(grid), Operators1D.momentum(grid)
 
 
 def evolution(task: Task, x0: float, p0: float, sigma: float, mass: float) -> EigenbasisEvolution:
-    packet = WaveFunctions1D.packet(grid, x0, p0, sigma)
+    packet = States1D.packet(grid, x0, p0, sigma)
     return EigenbasisEvolution(task.hamiltonian(grid, mass), packet)
 
 
@@ -45,8 +46,9 @@ def test_free_packet_spreads_as_the_textbook_formula_says():
 
 def test_free_packet_momentum_distribution_does_not_change():
     packets = evolution(FreeParticle(), x0=-3.0, p0=1.5, sigma=1.0, mass=0.7)
-    _, initial = WaveFunctions1D.momentum_wavefunction(packets.state_at(0.0))
-    _, later = WaveFunctions1D.momentum_wavefunction(packets.state_at(6.0))
+    momentum = ContinuousBasis(p)
+    initial = momentum.wavefunction(packets.state_at(0.0))
+    later = momentum.wavefunction(packets.state_at(6.0))
     assert np.allclose(np.abs(initial), np.abs(later))
 
 

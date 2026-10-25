@@ -8,9 +8,10 @@ from matplotlib.axes import Axes
 from matplotlib.widgets import Button, Slider
 
 from elements.quantum.continuous_approx import (
+    ContinuousBasis,
     CyclicalGrid1DStateSpace,
     Operators1D,
-    WaveFunctions1D,
+    States1D,
 )
 from elements.quantum.evolution import EigenbasisEvolution
 from elements.quantum.state import StateSpaceVector
@@ -37,6 +38,8 @@ class WavePacketExplorer:
         self.task = tasks[0]
         self.grid = grid
         self.momentum = Operators1D.momentum(grid)
+        self.position_basis = ContinuousBasis(Operators1D.position(grid))
+        self.momentum_basis = ContinuousBasis(self.momentum)
         # exp(2 pi i X / L), the boost by one quantum of momentum: the one function of X that
         # turns smoothly all the way round the ring.
         self._ring_boost = Operators1D.boost(grid, 2 * np.pi / grid.length)
@@ -94,7 +97,7 @@ class WavePacketExplorer:
     def _restart(self) -> None:
         values = {name: slider.val for name, slider in self.sliders.items()}
         self._initial = (values["x0"], values["p0"], values["mass"])
-        packet = WaveFunctions1D.packet(self.grid, values["x0"], values["p0"], values["sigma"])
+        packet = States1D.packet(self.grid, values["x0"], values["p0"], values["sigma"])
         hamiltonian = self.task.hamiltonian(self.grid, values["mass"])
         self.evolution = EigenbasisEvolution(hamiltonian, packet)
         self.time = 0.0
@@ -109,8 +112,8 @@ class WavePacketExplorer:
         self._restart_pending = False
 
     def _show(self, state: StateSpaceVector) -> None:
-        x, psi = WaveFunctions1D.position_wavefunction(state)
-        p, phi = WaveFunctions1D.momentum_wavefunction(state)
+        x, psi = self.position_basis.points, self.position_basis.wavefunction(state)
+        p, phi = self.momentum_basis.points, self.momentum_basis.wavefunction(state)
         density = np.abs(psi) ** 2
         mean_x = self._ring_mean(state)
         mean_p = self.momentum.expectation(state)
@@ -223,8 +226,8 @@ class WavePacketExplorer:
         axes.set_ylim(middle - half, middle + half)
 
     def _rescale(self, packet: StateSpaceVector) -> None:
-        peak_psi = np.abs(WaveFunctions1D.position_wavefunction(packet)[1]).max()
-        peak_phi = np.abs(WaveFunctions1D.momentum_wavefunction(packet)[1]).max()
+        peak_psi = np.abs(self.position_basis.wavefunction(packet)).max()
+        peak_phi = np.abs(self.momentum_basis.wavefunction(packet)).max()
         self.density_axes.set_ylim(0, 1.15 * peak_psi**2)
         self.position_axes.set_ylim(-1.15 * peak_psi, 1.15 * peak_psi)
         self.momentum_axes.set_ylim(-1.15 * peak_phi, 1.15 * peak_phi)

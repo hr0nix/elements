@@ -11,9 +11,9 @@ from matplotlib.widgets import Slider
 
 from elements.quantum.basis import Basis
 from elements.quantum.continuous_approx import (
+    ContinuousBasis,
     CyclicalGrid1DStateSpace,
     Operators1D,
-    WaveFunctions1D,
 )
 from elements.quantum.operator import Operator
 from elements.quantum.tasks import FreeParticle, Gravity, HarmonicOscillator, Task
@@ -226,12 +226,13 @@ class BasisExplorer:
     def rebuild(self) -> None:
         target, view = self._operator(self.target), self._operator(self.view)
         self.target_values, self.view_values = target.eigenvalues, view.eigenvalues
-        view_basis = self._with_textbook_signs(view.eigenbasis)
         target_basis = self._with_textbook_signs(target.eigenbasis)
-        # Row i, column j is <view_i|target_j>: column j is target eigenvector j in the view basis.
-        self.amplitudes = view_basis.overlaps(target_basis)
+        # Column j is target eigenvector j in the view basis: its wavefunction over the view's
+        # eigenvalues when they sample a continuum, its amplitudes <view_i|target_j> otherwise.
         if self.view.continuous:
-            self.amplitudes = WaveFunctions1D.amplitude_density(self.view_values, self.amplitudes)
+            self.amplitudes = ContinuousBasis(view).wavefunctions(target_basis)
+        else:
+            self.amplitudes = self._with_textbook_signs(view.eigenbasis).overlaps(target_basis)
         # A new kind of eigenvector starts from the one nearest zero: x = 0, p = 0 or the ground
         # state. Otherwise the selection stays, so a level can be compared across tasks.
         if self.target != self._listed:
