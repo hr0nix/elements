@@ -97,6 +97,41 @@ def test_a_pure_density_gives_the_expectations_of_its_ket():
         assert sigma.expectation(pure) == pytest.approx(sigma.expectation(Spin.y_plus))
 
 
+def test_probabilities_of_a_density_are_its_real_diagonal():
+    mixture = Operator.spectral([(0.3, Spin.z_plus), (0.7, Spin.z_minus)])
+    assert mixture.probabilities() == pytest.approx([0.3, 0.7])
+    probabilities = Operator.density(Spin.y_plus).probabilities()
+    assert np.isrealobj(probabilities)
+    assert probabilities == pytest.approx([0.5, 0.5])
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        pytest.param(Spin.y_minus, id="spin"),
+        pytest.param(0.6 * Spin.z_plus + 0.8j * Spin.z_minus, id="complex amplitudes"),
+        pytest.param(TwoSpins.singlet, id="two spins"),
+    ],
+)
+def test_a_pure_density_gives_the_probabilities_of_its_ket(state):
+    assert Operator.density(state).probabilities() == pytest.approx(state.probabilities())
+
+
+def test_probabilities_of_a_partial_trace_are_the_marginals_of_the_joint_probabilities():
+    state = np.sqrt(0.2) * TwoSpins.uu + np.sqrt(0.3) * TwoSpins.ud + np.sqrt(0.5) * TwoSpins.du
+    joint = state.probabilities()
+    density = Operator.density(state)
+    assert density.partial_trace(keep=0).probabilities() == pytest.approx(joint.sum(axis=1))
+    assert density.partial_trace(keep=1).probabilities() == pytest.approx(joint.sum(axis=0))
+    assert density.partial_trace(keep=0).probabilities() == pytest.approx([0.5, 0.5])
+    assert density.partial_trace(keep=1).probabilities() == pytest.approx([0.7, 0.3])
+
+
+def test_only_densities_have_probabilities():
+    with pytest.raises(ValueError, match="density"):
+        sigma_x.probabilities()
+
+
 def test_densities_come_from_normalized_kets_and_only_densities_have_a_purity():
     with pytest.raises(ValueError, match="normalized ket"):
         Operator.density(2 * Spin.z_plus)

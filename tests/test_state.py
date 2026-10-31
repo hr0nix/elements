@@ -28,6 +28,20 @@ def test_spin_prepared_along_one_axis_is_a_coin_flip_along_another():
             assert probability == pytest.approx(0.5)
 
 
+def test_probabilities_of_a_ket_are_the_squared_magnitudes_of_its_components():
+    state = 0.6 * Spin.z_plus + 0.8j * Spin.z_minus
+    assert state.probabilities() == pytest.approx([0.36, 0.64])
+
+
+def test_probabilities_of_a_product_state_are_laid_out_one_axis_per_factor():
+    assert TwoSpins.singlet.probabilities() == pytest.approx(np.array([[0, 0.5], [0.5, 0]]))
+    assert TwoSpins.singlet.probabilities(as_matrix=False) == pytest.approx([0, 0.5, 0.5, 0])
+
+
+def test_probabilities_of_a_ket_do_not_depend_on_its_norm():
+    assert (3 * Spin.x_plus).probabilities() == pytest.approx([0.5, 0.5])
+
+
 def test_inner_product_of_product_states_factorizes():
     a, b, c, d = Spin.x_plus, Spin.y_minus, Spin.z_plus, Spin.x_plus
     combined = a.tensor_product(b).dagger @ c.tensor_product(d)

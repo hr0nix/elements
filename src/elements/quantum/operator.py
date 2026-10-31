@@ -192,6 +192,15 @@ class Operator:
             return Operator.diagonal(self._eigenbasis, self._eigenvalues.conj())
         return Operator.from_matrix(self.state_space, self.matrix.conj().T)
 
+    def probabilities(self, as_matrix: bool = True) -> np.ndarray:
+        if not self.is_density:
+            raise ValueError("Can only compute probabilities for a density operator")
+        basis = self.state_space.basis.matrix
+        probs =  np.diag(basis.conj().T @ self.matrix @ basis).real
+        if as_matrix:
+            probs = probs.reshape([f.dimension for f in self.state_space.factors])
+        return probs
+
     # Scaling keeps the eigenvectors and scales the eigenvalues, when they are already known.
     def __mul__(self, other: complex) -> Operator:
         if not isinstance(other, Number):

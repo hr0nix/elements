@@ -124,6 +124,13 @@ class StateSpaceVector:
         ket = self if self.is_ket else self.dagger
         return math.sqrt((ket.dagger @ ket).real)
 
+    def probabilities(self, as_matrix: bool = True) -> np.ndarray:
+        norm_components = self.normalized.components
+        probs = (norm_components.conj() * norm_components).real.ravel()
+        if as_matrix:
+            probs = probs.reshape([f.dimension for f in self.state_space.factors])
+        return probs
+
     @property
     def normalized(self) -> StateSpaceVector:
         return self / self.norm
