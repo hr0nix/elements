@@ -3,6 +3,7 @@ from elements.quantum.state import StateSpace, StateSpaceVector
 from elements.quantum.operator import Operator
 from elements.quantum.gates import Gates
 import numpy as np
+import math
 import pytest
 from typing import Sequence
 
@@ -118,3 +119,49 @@ def test_stern_gerlach_split_up_down_then_left_right_then_up_down_again():
     assert marginal_probabilities(x, register=[1,2]) == pytest.approx(np.array([[0.25, 0.25], [0.25, 0.25]]))
     assert marginal_probabilities(x, register=[1,2,3]) == pytest.approx(np.array([[[0.125, 0.125], [0.125, 0.125]], [[0.125, 0.125], [0.125, 0.125]]]))
 
+
+def test_interferometer():
+    def _apply_circuit(input: StateSpaceVector, add_phase: bool, recombine_before_2nd_split: bool) -> StateSpaceVector:
+        x = input
+        
+        x = x.tensor_product(deflection_initial)
+        
+        split = make_magnet_operator(positive_deflection_on=Spin.up)
+        x = split @ x
+
+        if add_phase:
+            spin_rotation = Spin.sigma_z.unitary(math.pi)
+            rotate_only_up = (
+                spin_rotation.tensor_product(Operator.density(deflection_plus)) +
+                Spin.identity.tensor_product(Operator.density(deflection_minus))
+            )
+            assert rotate_only_up.is_unitary
+            x = rotate_only_up @ x
+
+        if recombine_before_2nd_split:
+            recombine = split.dagger
+            x = recombine @ x
+
+        x = x.tensor_product(deflection_initial)
+
+        magnet_u = make_magnet_operator(positive_deflection_on=Spin.x_plus.tensor_product(deflection_plus))
+        x = magnet_u @ x
+
+        magnet_d = make_magnet_operator(positive_deflection_on=Spin.x_plus.tensor_product(deflection_minus))
+        x = magnet_d @ x
+        
+        return x
+
+    x = _apply_circuit(Spin.x_plus, add_phase=False, recombine_before_2nd_split=False)
+    assert marginal_probabilities(x, register=1) == pytest.approx([0.5, 0.5])
+    assert marginal_probabilities(x, register=[1,2]) == pytest.approx(np.array([[0.25, 0.25], [0.25, 0.25]]))
+
+    x = _apply_circuit(Spin.x_plus, add_phase=True, recombine_before_2nd_split=False)
+    assert marginal_probabilities(x, register=1) == pytest.approx([0.5, 0.5])
+    assert marginal_probabilities(x, register=[1,2]) == pytest.approx(np.array([[0.25, 0.25], [0.25, 0.25]]))
+    
+    x = _apply_circuit(Spin.x_plus, add_phase=False, recombine_before_2nd_split=True)
+    assert marginal_probabilities(x, register=2) == pytest.approx(np.array([1.0, 0.0]))
+
+    x = _apply_circuit(Spin.x_plus, add_phase=True, recombine_before_2nd_split=True)
+    assert marginal_probabilities(x, register=2) == pytest.approx(np.array([0.0, 1.0]))
